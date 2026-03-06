@@ -24,6 +24,18 @@ def test_ssl_redirect_can_be_disabled(app_factory):
     assert response.status_code == 200
 
 
+def test_stream_proxy_public_without_auth(app_ctx, monkeypatch):
+    import app.routes.proxy as proxy_module
+
+    def _timeout(_url, timeout=60):  # pragma: no cover - behavior validated by status code
+        raise proxy_module.requests.Timeout()
+
+    monkeypatch.setattr(proxy_module, "stream_request", _timeout)
+    response = app_ctx["client"].get("/stream-proxy/http%3A%2F%2Fprovider%2Flive%2Fu%2Fp%2F1.ts")
+    # Important assertion: proxy endpoint is reachable without auth/setup checks.
+    assert response.status_code == 504
+
+
 def test_protected_route_requires_setup_then_login(app_ctx):
     client = app_ctx["client"]
 
@@ -125,7 +137,8 @@ def test_stream_link_endpoint_with_mocked_validation(admin_ctx, monkeypatch):
 
     response = client.get("/stream-link?url=http://provider&username=u&password=p&stream_id=72&content_type=live&extension=ts")
     assert response.status_code == 200
-    assert response.json["url"].endswith("/live/u/p/72.ts")
+    assert "/stream-proxy/" in response.json["url"]
+    assert "http%3A%2F%2Fprovider.host%3A80%2Flive%2Fu%2Fp%2F72.ts" in response.json["url"]
 
 
 def test_stream_link_secure_request_prefers_https_candidate(admin_ctx, monkeypatch):
@@ -155,8 +168,9 @@ def test_stream_link_secure_request_prefers_https_candidate(admin_ctx, monkeypat
         headers={"X-Forwarded-Proto": "https"},
     )
     assert response.status_code == 200
-    assert response.json["url"] == "https://provider.host:443/live/u/p/72.ts"
-    assert response.json["candidates"][0] == "https://provider.host:443/live/u/p/72.ts"
+    assert "/stream-proxy/" in response.json["url"]
+    assert "https%3A%2F%2Fprovider.host%3A443%2Flive%2Fu%2Fp%2F72.ts" in response.json["url"]
+    assert response.json["candidates"][0] == response.json["url"]
 
 
 def test_public_m3u_endpoint_without_auth(app_ctx, monkeypatch):
