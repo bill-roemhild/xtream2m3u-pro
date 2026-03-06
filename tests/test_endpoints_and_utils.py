@@ -128,6 +128,37 @@ def test_stream_link_endpoint_with_mocked_validation(admin_ctx, monkeypatch):
     assert response.json["url"].endswith("/live/u/p/72.ts")
 
 
+def test_stream_link_secure_request_prefers_https_candidate(admin_ctx, monkeypatch):
+    client = admin_ctx["client"]
+    api = admin_ctx["api"]
+
+    monkeypatch.setattr(
+        api,
+        "validate_xtream_credentials",
+        lambda url, username, password: (
+            {
+                "user_info": {"username": username, "password": password},
+                "server_info": {
+                    "url": "provider.host",
+                    "port": "80",
+                    "https_port": "443",
+                    "server_protocol": "http",
+                },
+            },
+            None,
+            None,
+        ),
+    )
+
+    response = client.get(
+        "/stream-link?url=http://provider&username=u&password=p&stream_id=72&content_type=live&extension=ts",
+        headers={"X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 200
+    assert response.json["url"] == "https://provider.host:443/live/u/p/72.ts"
+    assert response.json["candidates"][0] == "https://provider.host:443/live/u/p/72.ts"
+
+
 def test_public_m3u_endpoint_without_auth(app_ctx, monkeypatch):
     client = app_ctx["client"]
     api = app_ctx["api"]

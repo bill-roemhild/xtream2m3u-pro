@@ -12,6 +12,7 @@ from flask import Blueprint, Response, current_app, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.services import (
+    build_stream_link_candidates,
     build_stream_link,
     fetch_api_data,
     fetch_categories_and_channels,
@@ -1281,7 +1282,16 @@ def get_stream_link():
     if error_json:
         return error_json, error_code, {"Content-Type": "application/json"}
 
-    link = build_stream_link(
+    candidates = build_stream_link_candidates(
+        server_info=user_data.get("server_info"),
+        username=username,
+        password=password,
+        content_type=content_type,
+        stream_id=stream_id,
+        extension=extension,
+        timeshift={"start": timeshift_start, "duration": timeshift_duration},
+    )
+    link = candidates[0] if candidates else build_stream_link(
         server_info=user_data.get("server_info"),
         username=username,
         password=password,
@@ -1294,6 +1304,7 @@ def get_stream_link():
     return jsonify(
         {
             "url": link,
+            "candidates": candidates,
             "content_type": content_type,
             "stream_id": stream_id,
             "extension": extension,
