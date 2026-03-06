@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>xtream2m3u - Playlist Generator</title>
+    <meta name="description" content="Convert Xtream IPTV APIs into customizable M3U playlists">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/png" href="/assets/logo.png">
+</head>
+
+<body autocomplete="off">
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-actions">
+                <div class="header-actions-left">
+                    <span id="authUserBadge" class="auth-user-badge" style="display:none;"></span>
+                </div>
+                <div class="header-actions-right">
+                    <button type="button" class="btn btn-secondary btn-compact" id="backupRestoreBtn" style="display: inline-flex;height: 36px;" onclick="openBackupModal()">Backup / Restore</button>
+                    <button type="button" class="btn btn-secondary btn-compact" id="addUserBtn" style="display: inline-flex;height: 36px;" onclick="openAddUserModal()">User Maintenance</button>
+                    <button type="button" class="btn btn-secondary btn-compact" id="logoutBtn" style="display: inline-flex;height: 36px;" onclick="submitLogout()">Logout</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Step 1: Credentials -->
+        <section class="step active" id="step1">
+            <div class="card">
+                <div class="card-header">
+                    <span>🔐 Service Credentials</span>
+                </div>
+                <div class="card-body">
+                    <form id="credentialsForm" autocomplete="off" onsubmit="event.preventDefault(); loadCategories();">
+                        <div class="form-group">
+                            <label for="credentialProfileSelect">Saved Servers</label>
+                            <div class="profile-controls">
+                                <select id="credentialProfileSelect"></select>
+                                <button type="button" class="btn btn-secondary btn-compact" id="newProfileBtn" onclick="createNewProfile()">New</button>
+                                <button type="button" class="btn btn-secondary btn-compact" id="editProfileBtn" onclick="editCurrentProfile()">Edit</button>
+                                <button type="button" class="btn btn-secondary btn-compact" id="deleteProfileBtn" onclick="deleteCurrentProfile()">Delete</button>
+                            </div>
+                        </div>
+
+                        <input type="hidden" id="url" value="">
+                        <input type="hidden" id="username" value="">
+                        <input type="hidden" id="password" value="">
+                        <input type="checkbox" id="includeVod" style="display: none;">
+
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary" id="loadBtn">
+                                <span id="loadCategoriesText">Connect</span>
+                            </button>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </section>
+
+        <!-- Loading State -->
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p id="loadingText">Connecting to service...</p>
+        </div>
+
+        <!-- Step 2: Category Selection -->
+        <section class="step" id="step2">
+            <div class="card">
+                <div class="subscription-details" id="subscriptionDetails"></div>
+                <div class="card-header">
+                    <span>📁 Customize Playlist</span>
+                </div>
+                <div class="card-body">
+                    <div id="savedPlaylistsListContainer" style="margin-bottom: 1rem; text-align: left;">
+                        <label>Saved Playlists For Selected Service</label>
+                        <div id="savedPlaylistsList" class="saved-playlists-list"></div>
+                    </div>
+
+                    <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" onclick="goBackToStep1()">
+                            Back
+                        </button>
+                        <button class="btn btn-success" onclick="openPlaylistBuilderModal()">
+                            Create Playlist
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 3: Success -->
+        <section class="step" id="step3">
+            <div class="card">
+                <div class="success-state">
+                    <div class="success-checkmark">✓</div>
+                    <h2 class="success-title">Playlist Ready!</h2>
+                    <p class="success-message">Your custom M3U playlist has been generated successfully.</p>
+
+                    <div class="success-actions">
+                        <a class="btn btn-success download-link" id="finalDownloadLink">
+                            <span>📥 Download .m3u</span>
+                        </a>
+                        <button class="btn btn-primary" onclick="startOver()">
+                            Create Another
+                        </button>
+                    </div>
+
+                </div>
+            </div>
+        </section>
+
+        <!-- API Builder Modal -->
+        <div class="modal" id="apiBuilderModal">
+            <div class="modal-content" style="max-width: 700px;">
+                <div class="modal-header">
+                    <h3>🛠️ API URL Builder</h3>
+                    <p class="subtitle" style="font-size: 0.9rem; margin-bottom: 1rem;">Use this URL to fetch your custom playlist directly from any player.</p>
+                </div>
+
+                <div class="api-options">
+                   <div class="form-group">
+                       <label>Endpoint Type</label>
+                       <select id="apiType" onchange="updateApiUrl()">
+                           <option value="m3u">M3U Playlist</option>
+                           <option value="xmltv">XMLTV EPG</option>
+                           <option value="categories">Categories</option>
+                       </select>
+                   </div>
+
+                   <!-- Additional Options (only for M3U) -->
+                   <div id="m3uOptions">
+                       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                           <div class="checkbox-wrapper" title="Disables stream proxying. URLs will point directly to the IPTV provider.">
+                               <label class="checkbox-label" style="padding: 0.5rem;">
+                                   <input type="checkbox" id="apiNoStreamProxy" checked onchange="updateApiUrl()">
+                                   <div class="checkmark"></div>
+                                   <div class="checkbox-text"><small>No Stream Proxy</small></div>
+                               </label>
+                           </div>
+                           <div class="checkbox-wrapper" title="Includes the unique 'channel-id' tag in the playlist. Useful for some players.">
+                               <label class="checkbox-label" style="padding: 0.5rem;">
+                                   <input type="checkbox" id="apiIncludeChannelId" onchange="updateApiUrl()">
+                                   <div class="checkmark"></div>
+                                   <div class="checkbox-text"><small>Include Channel ID</small></div>
+                               </label>
+                           </div>
+                       </div>
+
+                       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                           <div class="form-group" style="margin-bottom: 0;" title="Optional: Custom base URL for proxied content. Useful for reverse proxies.">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Proxy URL (Optional)</label>
+                               <input type="text" id="apiProxyUrl" placeholder="http://your-domain.com" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;" title="Optional: Custom tag name for the channel ID (default: channel-id).">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Channel ID Tag (Optional)</label>
+                               <input type="text" id="apiChannelIdTag" placeholder="channel-id" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                       </div>
+                   </div>
+
+                   <div id="advancedApiOptions" style="display: none;">
+                       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Stream ID</label>
+                               <input type="text" id="apiStreamId" placeholder="12345" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Content Type</label>
+                               <select id="apiContentType" onchange="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                                   <option value="live">live</option>
+                                   <option value="movie">movie</option>
+                                   <option value="series">series</option>
+                               </select>
+                           </div>
+                       </div>
+                       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">VOD ID</label>
+                               <input type="text" id="apiVodId" placeholder="456" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Series ID</label>
+                               <input type="text" id="apiSeriesId" placeholder="789" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                       </div>
+                       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Category ID</label>
+                               <input type="text" id="apiCategoryId" placeholder="Optional" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Page</label>
+                               <input type="number" id="apiPage" value="1" min="1" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Limit</label>
+                               <input type="number" id="apiLimit" value="200" min="1" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                       </div>
+                       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Extension</label>
+                               <input type="text" id="apiStreamExtension" value="ts" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Timeshift Start</label>
+                               <input type="text" id="apiTimeshiftStart" placeholder="2026-03-06:12-00" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                           <div class="form-group" style="margin-bottom: 0;">
+                               <label style="font-size: 0.8rem; margin-bottom: 0.25rem;">Timeshift Duration</label>
+                               <input type="number" id="apiTimeshiftDuration" placeholder="120" oninput="updateApiUrl()" style="padding: 0.5rem; font-size: 0.9rem;">
+                           </div>
+                       </div>
+                   </div>
+                </div>
+
+                <div class="api-url-container">
+                    <label>Generated URL</label>
+                    <div class="url-display-box">
+                        <code id="generatedApiUrl">https://...</code>
+                        <button class="btn-copy" type="button" onclick="copyApiUrl(this)">📋</button>
+                    </div>
+                </div>
+
+                <div class="modal-actions" style="margin-top: 1.5rem;">
+                    <button class="btn btn-secondary" onclick="closeApiBuilder()">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Playlist Builder Modal -->
+        <div class="modal" id="playlistBuilderModal">
+            <div class="modal-content" style="max-width: 1050px;">
+                <div class="modal-header">
+                    <h3 id="playlistBuilderTitle">Create Playlist</h3>
+                </div>
+                <div class="form-group">
+                    <label for="playlistBuilderName">Playlist Name (Required)</label>
+                    <input type="text" id="playlistBuilderName" placeholder="My Playlist" required>
+                </div>
+                <div class="toolbar">
+                    <div class="filter-mode">
+                        <label>
+                            <input type="radio" name="filterMode" value="include" checked>
+                            <span>Include Selected</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="filterMode" value="exclude">
+                            <span>Exclude Selected</span>
+                        </label>
+                    </div>
+                    <div class="search-box">
+                        <input type="text" id="categorySearch" placeholder="Search categories..." autocomplete="off">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                </div>
+
+                <div class="selection-counter" id="selectionCounter">
+                    <span id="selectionText">Select categories to include in your playlist</span>
+                    <div class="selection-actions">
+                         <button class="btn-text" onclick="selectAllVisible()">Select Visible</button>
+                         <button class="btn-text" onclick="clearSelection()">Clear All</button>
+                    </div>
+                </div>
+
+                <div class="category-chips" id="categoryChips">
+                    <!-- Categories populated via JS -->
+                </div>
+
+                <div class="modal-actions" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" onclick="closePlaylistBuilderModal()">Close</button>
+                    <button class="btn btn-success" id="playlistBuilderSaveBtn" onclick="savePlaylistFromBuilderModal()">Save Playlist</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="channelEditorModal">
+            <div class="modal-content" style="max-width: 820px;">
+                <div class="modal-header">
+                    <h3 id="channelEditorTitle">Edit Channels</h3>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <input type="text" id="channelSearchInput" placeholder="Search channels..." autocomplete="off">
+                        <span class="search-icon">🔍</span>
+                    </div>
+                </div>
+                <div class="selection-counter" id="channelSelectionCounter">
+                    <span id="channelSelectionText">Select channels for this group</span>
+                    <div class="selection-actions">
+                        <button class="btn-text" type="button" onclick="selectAllVisibleChannels()">Select Visible</button>
+                        <button class="btn-text" type="button" onclick="clearChannelSelection()">Clear Group</button>
+                    </div>
+                </div>
+                <div id="channelList" class="channel-list"></div>
+                <div class="modal-actions" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" type="button" onclick="closeChannelEditorModal()">Done</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal" id="channelViewerModal">
+            <div class="modal-content" style="max-width: 960px;">
+                <div class="modal-header">
+                    <h3 id="channelViewerTitle">Channel Viewer</h3>
+                </div>
+                <div class="channel-viewer-shell">
+                    <video id="channelViewerVideo" autoplay playsinline style="width:100%; max-height: 70vh; background: #000; border-radius: 10px;"></video>
+                    <div class="channel-viewer-controls">
+                        <button class="btn-text" type="button" id="channelViewerPlayBtn" onclick="toggleChannelViewerPlayPause()">Play</button>
+                        <button class="btn-text" type="button" id="channelViewerMuteBtn" onclick="toggleChannelViewerMute()">Mute</button>
+                        <label class="channel-volume-wrap">
+                            <span>Vol</span>
+                            <input type="range" id="channelViewerVolume" min="0" max="1" step="0.05" value="1">
+                        </label>
+                        <button class="btn-text" type="button" onclick="toggleChannelViewerFullscreen()">Fullscreen</button>
+                        <span id="channelViewerStatus" class="channel-viewer-status">Idle</span>
+                    </div>
+                </div>
+                <div class="modal-actions" style="margin-top: 1rem;">
+                    <button class="btn btn-secondary" type="button" onclick="closeChannelViewerModal()">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- New Server Modal -->
+        <div class="modal" id="newProfileModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Add New Server</h3>
+                </div>
+                <div class="modal-summary" style="display: grid; gap: 0.75rem;">
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="newProfileName">Profile Name</label>
+                        <input type="text" id="newProfileName" placeholder="My Provider">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="newProfileUrl">Service URL</label>
+                        <input type="url" id="newProfileUrl" placeholder="http://provider.com:8080">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="newProfileUsername">Username</label>
+                        <input type="text" id="newProfileUsername" placeholder="username" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <label for="newProfilePassword">Password</label>
+                        <input type="password" id="newProfilePassword" placeholder="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                        <div class="checkbox-wrapper">
+                            <label class="checkbox-label" style="padding: 0.75rem;">
+                                <input type="checkbox" id="newProfileIncludeVod">
+                                <div class="checkmark"></div>
+                                <div class="checkbox-text">
+                                    <strong>Include VOD Content</strong>
+                                    <small>Movies & Series (may increase loading time)</small>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" type="button" onclick="closeNewProfileModal()">Cancel</button>
+                    <button class="btn btn-success" type="button" onclick="saveNewProfileFromModal()">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Confirmation Modal -->
+        <div class="modal" id="confirmationModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Save Playlist</h3>
+                </div>
+                <div class="modal-summary" id="modalSummary">
+                    <!-- Summary populated via JS -->
+                </div>
+                <div class="form-group">
+                    <label for="modalPlaylistName">Playlist Name (Required)</label>
+                    <input type="text" id="modalPlaylistName" placeholder="My Playlist" required>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="savePlaylistFromModal()">Save Playlist</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Confirm Modal -->
+        <div class="modal" id="deleteConfirmModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Confirm Delete</h3>
+                </div>
+                <div class="modal-summary">
+                    <p id="deleteConfirmText">Are you sure you want to delete this item?</p>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" type="button" onclick="closeDeleteConfirmModal()">Cancel</button>
+                    <button class="btn btn-danger" type="button" onclick="confirmDeleteAction()">Delete</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Warning Modal -->
+        <div class="modal" id="warningModal">
+            <div class="modal-content" style="max-width: 460px;">
+                <div class="modal-header">
+                    <h3>Warning</h3>
+                </div>
+                <div class="modal-summary">
+                    <p id="warningModalText">Please review required fields.</p>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" type="button" onclick="closeWarningModal()">OK</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add User Modal -->
+        <div class="modal" id="addUserModal">
+            <div class="modal-content" style="max-width: 460px;">
+                <div class="modal-header">
+                    <h3>Add User</h3>
+                </div>
+                <div class="form-group">
+                    <label for="addUserUsername">Username</label>
+                    <input type="text" id="addUserUsername" placeholder="newuser" autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="addUserPassword">Password</label>
+                    <input type="password" id="addUserPassword" placeholder="At least 8 characters" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <div class="checkbox-wrapper">
+                        <label class="checkbox-label" style="padding: 0.75rem;">
+                            <input type="checkbox" id="addUserIsAdmin">
+                            <div class="checkmark"></div>
+                            <div class="checkbox-text">
+                                <strong>Admin User</strong>
+                                <small>Admins can view and manage all users' services.</small>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Existing Users</label>
+                    <div id="authUsersList" class="saved-playlists-list">
+                        <div class="saved-playlist-item">Loading users...</div>
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" type="button" onclick="closeAddUserModal()">Cancel</button>
+                    <button class="btn btn-success" type="button" onclick="submitAddUser()">Create User</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Backup/Restore Modal -->
+        <div class="modal" id="backupModal">
+            <div class="modal-content" style="max-width: 560px;">
+                <div class="modal-header">
+                    <h3>Backup / Restore</h3>
+                    <p class="subtitle" style="font-size: 0.9rem;">Download or restore users, services, and saved playlists.</p>
+                </div>
+                <div class="modal-summary" style="display:grid; gap:0.75rem;">
+                    <button class="btn btn-success" type="button" onclick="downloadBackup()">Download Backup</button>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="backupFileInput">Restore From Backup File</label>
+                        <input type="file" id="backupFileInput" accept=".json,application/json">
+                    </div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" type="button" onclick="closeBackupModal()">Close</button>
+                    <button class="btn btn-primary" type="button" onclick="restoreBackup()">Restore Backup</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="results"></div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div class="modal active" id="authModal">
+        <div class="modal-content" style="max-width: 460px;">
+            <div class="modal-header">
+                <h3 id="authModalTitle">Login Required</h3>
+                <p class="subtitle" id="authModalSubtitle" style="font-size: 0.9rem;">Sign in to access the service.</p>
+            </div>
+
+            <div id="authSetupForm" style="display:none;">
+                <div class="form-group">
+                    <label for="setupUsername">Admin Username</label>
+                    <input type="text" id="setupUsername" placeholder="admin" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label for="setupPassword">Admin Password</label>
+                    <input type="password" id="setupPassword" placeholder="At least 8 characters" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" type="button" onclick="submitAuthSetup()">Create Admin Account</button>
+                </div>
+            </div>
+
+            <div id="authLoginForm">
+                <div class="form-group">
+                    <label for="loginUsername">Username</label>
+                    <input type="text" id="loginUsername" placeholder="username" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" placeholder="password" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </div>
+            </div>
+            <div id="authError" class="alert alert-error" style="display:none; margin-top: 0.75rem;"></div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" id="authLoginSubmitBtn" type="button" onclick="submitAuthLogin()">Login</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.18/dist/hls.min.js"></script>
+    <script src="script.js"></script>
+</body>
+
+</html>
