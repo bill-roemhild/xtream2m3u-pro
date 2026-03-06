@@ -1,0 +1,38 @@
+name: Release Please
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_as:
+        description: "Optional forced release version (example: 0.2.0)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: relver
+        run: |
+          if [ -n "${{ inputs.release_as }}" ]; then
+            echo "value=${{ inputs.release_as }}" >> "$GITHUB_OUTPUT"
+          elif [ -f VERSION ]; then
+            echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Release Please
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          release-as: ${{ steps.relver.outputs.value }}

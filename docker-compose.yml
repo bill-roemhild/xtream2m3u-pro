@@ -1,0 +1,34 @@
+name: xtream2m3u-pro
+
+services:
+  xtream2m3uV2:
+    image: ghcr.io/bill-roemhild/xtream2m3u-pro:latest
+    container_name: xtream2m3u-pro
+    ports:
+      - "5001:5000"
+    environment:
+      - FLASK_ENV=production
+      # Persistent app/session secret (generated to /data if unset)
+      - FLASK_SECRET_FILE=/data/flask_secret_key
+
+      # Persistent credential/profile/playlist/auth stores
+      - CREDENTIAL_PROFILE_STORE=/data/credential_profiles.json
+      - PLAYLIST_STORE_PATH=/data/saved_playlists.json
+      - AUTH_STORE_PATH=/data/auth_users.json
+      - AUTH_THROTTLE_STORE_PATH=/data/auth_login_throttle.json
+
+      # Persistent encryption key for upstream service credentials
+      - CREDENTIAL_CIPHER_FILE=/data/credential_cipher_key
+
+      # Login throttling / lockout tuning
+      - AUTH_MAX_LOGIN_ATTEMPTS=5
+      - AUTH_ATTEMPT_WINDOW_SECONDS=300
+      - AUTH_LOCKOUT_SECONDS=300
+
+      # - PROXY_URL=https://your-domain.com
+    volumes:
+      - xtream2m3u_data:/data
+    restart: unless-stopped
+
+volumes:
+  xtream2m3u_data:
