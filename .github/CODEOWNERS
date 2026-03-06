@@ -1,0 +1,4 @@
+# Require maintainer review for workflow/security-sensitive changes
+.github/workflows/* @bill-roemhild
+.github/CODEOWNERS @bill-roemhild
+AGENTS.md @bill-roemhild
