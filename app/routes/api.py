@@ -625,12 +625,12 @@ def load_profiles():
 
 
 def load_profiles_for_backup():
-    """Load profiles in storage format for backup export (keeps encrypted secrets encrypted)."""
+    """Load profiles for backup export with decrypted secrets for cross-instance portability."""
     try:
         if PROFILE_STORE_PATH.exists():
             raw = json.loads(PROFILE_STORE_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, list):
-                return raw
+                return sanitize_profiles(raw)
     except Exception as error:
         logger.warning("Failed reading raw profile store for backup path=%s error=%s", PROFILE_STORE_PATH, error)
     return []
@@ -703,12 +703,12 @@ def load_saved_playlists():
 
 
 def load_saved_playlists_for_backup():
-    """Load saved playlists in storage format for backup export."""
+    """Load saved playlists for backup export with decrypted secrets for cross-instance portability."""
     try:
         if PLAYLIST_STORE_PATH.exists():
             raw = json.loads(PLAYLIST_STORE_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, list):
-                return raw
+                return sanitize_saved_playlists(raw)
     except Exception as error:
         logger.warning("Failed reading raw playlist store for backup path=%s error=%s", PLAYLIST_STORE_PATH, error)
     return []

@@ -165,8 +165,8 @@ Service data:
 - Backup exports users, profiles, and playlists.
 - Restoring backup overwrites current stores.
 - If the current logged-in user no longer exists after restore, session is cleared and re-login is required.
-- Encrypted credential values remain encrypted in backup payloads.
-- Legacy plaintext credential values in imported data are accepted and re-saved encrypted.
+- Backup exports upstream service credentials in plaintext so backups can be restored across instances with different cipher keys.
+- Restored upstream credentials are always re-encrypted at rest in the local stores.
 
 ## Notes on IDs and URLs
 

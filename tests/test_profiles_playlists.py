@@ -1,5 +1,6 @@
 import io
 import json
+from pathlib import Path
 
 
 def test_profile_credentials_encrypted_at_rest(admin_ctx):
@@ -104,6 +105,8 @@ def test_user_sees_only_owned_profiles_and_playlists(admin_ctx):
 def test_backup_download_and_restore_roundtrip(admin_ctx):
     client = admin_ctx["client"]
     api = admin_ctx["api"]
+    profile_store = admin_ctx["paths"]["CREDENTIAL_PROFILE_STORE"]
+    playlist_store = admin_ctx["paths"]["PLAYLIST_STORE_PATH"]
 
     save_profile = client.post(
         "/profiles",
@@ -130,8 +133,8 @@ def test_backup_download_and_restore_roundtrip(admin_ctx):
     backup = client.get("/backup/download")
     assert backup.status_code == 200
     payload = json.loads(backup.data.decode("utf-8"))
-    assert payload["profiles"][0]["password"].startswith(api.CREDENTIAL_CIPHER_PREFIX)
-    assert payload["saved_playlists"][0]["config"]["password"].startswith(api.CREDENTIAL_CIPHER_PREFIX)
+    assert payload["profiles"][0]["password"] == "secret1"
+    assert payload["saved_playlists"][0]["config"]["password"] == "secret2"
 
     restore = client.post(
         "/backup/restore",
@@ -140,3 +143,84 @@ def test_backup_download_and_restore_roundtrip(admin_ctx):
     )
     assert restore.status_code == 200
     assert restore.json["ok"] is True
+
+    # Restored credentials remain usable in API responses.
+    restored_profiles = client.get("/profiles")
+    assert restored_profiles.status_code == 200
+    assert restored_profiles.json["profiles"][0]["password"] == "secret1"
+
+    restored_playlist = client.get(f"/saved-playlists/{payload['saved_playlists'][0]['id']}")
+    assert restored_playlist.status_code == 200
+    assert restored_playlist.json["config"]["password"] == "secret2"
+
+    # Storage remains encrypted at rest after restore.
+    raw_profiles = json.loads(profile_store.read_text(encoding="utf-8"))
+    assert str(raw_profiles[0]["password"]).startswith(api.CREDENTIAL_CIPHER_PREFIX)
+    raw_playlists = json.loads(playlist_store.read_text(encoding="utf-8"))
+    assert str(raw_playlists[0]["config"]["password"]).startswith(api.CREDENTIAL_CIPHER_PREFIX)
+
+
+def test_backup_restore_portable_across_different_cipher_keys(app_factory):
+    source = app_factory()
+    source_client = source["client"]
+
+    source_setup = source_client.post("/auth/setup", json={"username": "admin", "password": "password123"})
+    assert source_setup.status_code == 200
+
+    save_profile = source_client.post(
+        "/profiles",
+        json={
+            "name": "svc-source",
+            "url": "http://provider",
+            "username": "u1",
+            "password": "source-secret",
+        },
+    )
+    assert save_profile.status_code == 200
+
+    save_playlist = source_client.post(
+        "/saved-playlists",
+        json={
+            "name": "list-source",
+            "url": "http://provider",
+            "username": "u1",
+            "password": "playlist-secret",
+        },
+    )
+    assert save_playlist.status_code == 200
+
+    backup = source_client.get("/backup/download")
+    assert backup.status_code == 200
+    payload = json.loads(backup.data.decode("utf-8"))
+    assert payload["profiles"][0]["password"] == "source-secret"
+    assert payload["saved_playlists"][0]["config"]["password"] == "playlist-secret"
+
+    base_dir = source["paths"]["CREDENTIAL_PROFILE_STORE"].parent
+    target = app_factory(
+        CREDENTIAL_PROFILE_STORE=str(Path(base_dir) / "target_profiles.json"),
+        PLAYLIST_STORE_PATH=str(Path(base_dir) / "target_playlists.json"),
+        AUTH_STORE_PATH=str(Path(base_dir) / "target_auth.json"),
+        AUTH_THROTTLE_STORE_PATH=str(Path(base_dir) / "target_throttle.json"),
+        FLASK_SECRET_FILE=str(Path(base_dir) / "target_flask_secret"),
+        CREDENTIAL_CIPHER_FILE=str(Path(base_dir) / "target_cipher_key"),
+    )
+    target_client = target["client"]
+
+    target_setup = target_client.post("/auth/setup", json={"username": "admin", "password": "password123"})
+    assert target_setup.status_code == 200
+
+    restore = target_client.post(
+        "/backup/restore",
+        data={"file": (io.BytesIO(json.dumps(payload).encode("utf-8")), "backup.json")},
+        content_type="multipart/form-data",
+    )
+    assert restore.status_code == 200
+    assert restore.json["ok"] is True
+
+    restored_profiles = target_client.get("/profiles")
+    assert restored_profiles.status_code == 200
+    assert restored_profiles.json["profiles"][0]["password"] == "source-secret"
+
+    restored_playlist = target_client.get(f"/saved-playlists/{payload['saved_playlists'][0]['id']}")
+    assert restored_playlist.status_code == 200
+    assert restored_playlist.json["config"]["password"] == "playlist-secret"
