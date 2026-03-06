@@ -1,0 +1,51 @@
+name: Create GitHub Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v prefix (example: 0.1.2)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: create-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Validate version input
+        run: |
+          if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version '${{ inputs.version }}'. Expected semantic version like 0.1.2"
+            exit 1
+          fi
+
+      - name: Ensure VERSION file matches input
+        run: |
+          FILE_VERSION="$(cat VERSION)"
+          if [ "$FILE_VERSION" != "${{ inputs.version }}" ]; then
+            echo "VERSION file ($FILE_VERSION) does not match workflow input (${{ inputs.version }})"
+            exit 1
+          fi
+
+      - name: Create Release with Auto Notes
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b
+        with:
+          tag_name: v${{ inputs.version }}
+          target_commitish: main
+          name: v${{ inputs.version }}
+          generate_release_notes: true
+          make_latest: true
