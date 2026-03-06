@@ -5,6 +5,25 @@ def test_version_endpoint(app_factory):
     assert response.json["version"] == "2.5.7"
 
 
+def test_remote_http_redirects_to_https_by_default(app_ctx):
+    client = app_ctx["client"]
+    response = client.get("/version", base_url="http://example.com")
+    assert response.status_code == 301
+    assert response.headers["Location"] == "https://example.com/version"
+
+
+def test_localhost_http_not_redirected(app_ctx):
+    client = app_ctx["client"]
+    response = client.get("/version", base_url="http://localhost")
+    assert response.status_code == 200
+
+
+def test_ssl_redirect_can_be_disabled(app_factory):
+    ctx = app_factory(FORCE_SSL_REMOTE="false")
+    response = ctx["client"].get("/version", base_url="http://example.com")
+    assert response.status_code == 200
+
+
 def test_protected_route_requires_setup_then_login(app_ctx):
     client = app_ctx["client"]
 

@@ -5,11 +5,14 @@ services:
     image: ghcr.io/bill-roemhild/xtream2m3u-pro:latest
     container_name: xtream2m3u-pro
     ports:
-      - "5001:5000"
+      - "5000:5000"
     environment:
       - FLASK_ENV=production
       # Persistent app/session secret (generated to /data if unset)
       - FLASK_SECRET_FILE=/data/flask_secret_key
+      # TLS certificate/key paths for native HTTPS on :5000
+      - SSL_CERT_FILE=/data/tls/tls.crt
+      - SSL_KEY_FILE=/data/tls/tls.key
 
       # Persistent credential/profile/playlist/auth stores
       - CREDENTIAL_PROFILE_STORE=/data/credential_profiles.json
@@ -25,7 +28,8 @@ services:
       - AUTH_ATTEMPT_WINDOW_SECONDS=300
       - AUTH_LOCKOUT_SECONDS=300
 
-      # - PROXY_URL=https://your-domain.com
+      # Optional self-signed cert subject for first-run cert generation
+      # - SSL_CERT_SUBJECT=/CN=your-hostname
     volumes:
       - xtream2m3u_data:/data
     restart: unless-stopped
