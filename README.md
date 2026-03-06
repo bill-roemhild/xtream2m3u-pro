@@ -144,6 +144,7 @@ Auth model:
 
 - Session/cookie auth is required for most API routes.
 - Public routes (no login required): `GET /auth/status`, `POST /auth/setup`, `POST /auth/login`, `GET|POST /m3u`, `GET /xmltv`, `GET /playlist/<id>/m3u`, `GET /playlist/<id>/xmltv`, `GET /version`, `GET /stream-proxy/<...>`, `GET /image-proxy/<...>`.
+- JSON code blocks below show canonical request/response shapes for integration.
 
 ### Auth and User Management
 
