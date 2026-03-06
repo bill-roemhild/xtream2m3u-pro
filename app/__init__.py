@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def _load_app_version():
     """Resolve app version from env or VERSION file."""
     env_version = str(os.environ.get("APP_VERSION", "")).strip()
-    if env_version:
+    if env_version and env_version.lower() not in {"latest", "main", "master"}:
         return env_version
 
     version_file = Path(os.environ.get("APP_VERSION_FILE", "/app/VERSION"))
