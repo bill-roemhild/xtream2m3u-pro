@@ -133,48 +133,193 @@ Versioning:
 - `GET /version` returns the current app version for UI display.
 - GitHub Actions Docker builds inject `APP_VERSION` from workflow metadata (tag/sha based).
 
-## API Summary
+## API Reference (Required Inputs)
 
-Authentication:
+Base URL examples:
 
-- `GET /auth/status`
-- `POST /auth/setup`
-- `POST /auth/login`
-- `POST /auth/logout`
-- `GET /auth/users` (admin)
-- `POST /auth/users` (admin)
-- `POST /auth/users/delete` (admin)
+- `https://localhost:5000` (local Docker default)
+- `https://<server>:5000`
 
-Backup/restore (admin):
+Auth model:
 
-- `GET /backup/download`
-- `POST /backup/restore`
+- Session/cookie auth is required for most API routes.
+- Public routes (no login required): `GET /auth/status`, `POST /auth/setup`, `POST /auth/login`, `GET|POST /m3u`, `GET /xmltv`, `GET /playlist/<id>/m3u`, `GET /playlist/<id>/xmltv`, `GET /version`, `GET /stream-proxy/<...>`, `GET /image-proxy/<...>`.
 
-Profiles:
+### Auth and User Management
 
-- `GET /profiles`
-- `POST /profiles`
-- `POST /profiles/delete`
+`GET /auth/status`
 
-Playlist presets:
+- Auth: none
+- Required: none
+- Returns setup/login state (`needs_setup`, `authenticated`, `username`, `is_admin`, `user_count`)
 
-- `GET /saved-playlists`
-- `POST /saved-playlists`
-- `GET /saved-playlists/<id>`
-- `POST /saved-playlists/delete`
+`POST /auth/setup`
 
-Generated outputs:
+- Auth: none (first-run only)
+- Required JSON: `username`, `password` (`password` min length 8)
+- Creates the initial admin account and starts an authenticated session
 
-- `GET|POST /m3u`
-- `GET /xmltv`
-- `GET /playlist/<id>/m3u`
-- `GET /playlist/<id>/xmltv`
+`POST /auth/login`
 
-Service data:
+- Auth: none
+- Required JSON: `username`, `password`
+- Returns 429 with `retry_after` when temporary lockout is active
 
-- `GET /categories`
-- `GET /subscription`
-- `GET /stream-link` (used by channel viewer playback)
+`POST /auth/logout`
+
+- Auth: logged-in user
+- Required: none
+- Clears session
+
+`GET /auth/users`
+
+- Auth: admin
+- Required: none
+- Lists users (without password hashes)
+
+`POST /auth/users`
+
+- Auth: admin
+- Required JSON: `username`, `password`
+- Optional JSON: `is_admin` (bool)
+
+`POST /auth/users/delete`
+
+- Auth: admin
+- Required JSON: `username`
+- Deletes user plus their owned profiles/playlists
+- Cannot delete your own account or the last admin
+
+### Backup and Restore
+
+`GET /backup/download`
+
+- Auth: admin
+- Required: none
+- Downloads JSON backup containing `auth_users`, `profiles`, `saved_playlists`
+
+`POST /backup/restore`
+
+- Auth: admin
+- Required multipart form-data: `file` (JSON backup file)
+- Overwrites all stores with backup content
+- Response includes `relogin_required` if current session user no longer exists
+
+### Service Profiles
+
+`GET /profiles`
+
+- Auth: logged-in user
+- Required: none
+- Admin sees all profiles; non-admin sees only owned profiles
+
+`POST /profiles`
+
+- Auth: logged-in user
+- Required JSON: `name`, `url`, `username`, `password`
+- Optional JSON: `include_vod`, `owner` (admin can set owner)
+- Creates or updates profile by `(owner, name)`
+
+`POST /profiles/delete`
+
+- Auth: logged-in user
+- Required JSON: `name`
+- Optional JSON: `owner` (admin targeted delete)
+
+### Saved Playlist Presets
+
+`GET /saved-playlists`
+
+- Auth: logged-in user
+- Required: none
+- Optional query: `url`, `username`, `owner`
+- Admin filtering supports `owner`; non-admin sees only owned presets
+
+`POST /saved-playlists`
+
+- Auth: logged-in user
+- Required JSON: `name`, `url`, `username`, `password`
+- Optional JSON: `id` (update existing), `owner` (admin), `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`, `include_vod`, `include_channel_id`, `channel_id_tag`
+- Returns short M3U/XMLTV URLs for the saved preset
+
+`GET /saved-playlists/<id>`
+
+- Auth: logged-in user
+- Required path: `id`
+- Admin can fetch any; non-admin only own preset
+
+`POST /saved-playlists/delete`
+
+- Auth: logged-in user
+- Required JSON: `id`
+- Admin can delete any; non-admin only own preset
+
+### Generated Output Endpoints
+
+`GET|POST /m3u`
+
+- Auth: none (public endpoint)
+- Required params (query for GET, JSON for POST): `url`, `username`, `password`
+- Optional filters: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`
+- Optional options: `include_vod`, `include_channel_id`, `channel_id_tag`
+
+`GET /xmltv`
+
+- Auth: none (public endpoint)
+- Required query: `url`, `username`, `password`
+- Optional filters: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`
+
+`GET /playlist/<id>/m3u`
+
+- Auth: none (public endpoint)
+- Required path: `id`
+- Optional query: `preview=true|1|yes|on` (returns plain text preview instead of attachment)
+
+`GET /playlist/<id>/xmltv`
+
+- Auth: none (public endpoint)
+- Required path: `id`
+- Optional query: `preview=true|1|yes|on` (returns inline XML instead of attachment)
+
+### Service Data and Viewer Support
+
+`GET /subscription`
+
+- Auth: logged-in user
+- Required query: `url`, `username`, `password`
+- Returns normalized subscription and server details
+
+`GET /categories`
+
+- Auth: logged-in user
+- Required query: `url`, `username`, `password`
+- Optional query: `include_vod=true|false`
+- Returns `categories` plus `streams`
+
+`GET /stream-link`
+
+- Auth: logged-in user
+- Required query: `url`, `username`, `password`, `stream_id`
+- Optional query: `content_type` (`live` default), `extension` (`ts` default), `timeshift_start`, `timeshift_duration`
+- Returns proxy URL candidates for viewer playback
+
+`GET /stream-proxy/<encoded-upstream-url>`
+
+- Auth: none (public endpoint)
+- Required path: URL-encoded upstream media URL
+- Proxies TS/HLS; rewrites HLS manifests so segment/key requests continue through app proxy
+
+`GET /image-proxy/<encoded-image-url>`
+
+- Auth: none (public endpoint)
+- Required path: URL-encoded image URL
+- Proxies images for logo/CORS compatibility
+
+`GET /version`
+
+- Auth: none
+- Required: none
+- Returns current runtime app version
 
 ## Backup / Restore Behavior
 
