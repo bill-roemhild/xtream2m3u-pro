@@ -219,14 +219,29 @@ def fetch_catalog(url, username, password, content_type="live", category_id=None
     }
 
 
-def build_stream_link(server_info, username, password, content_type, stream_id, extension="ts", timeshift=None):
-    """Build a direct stream URL for live/movie/series resources."""
+def _build_stream_path(username, password, content_type, stream_id, extension="ts", timeshift=None):
+    normalized_type = (content_type or "live").lower()
+    if normalized_type == "movie":
+        return f"/movie/{username}/{password}/{stream_id}.{extension}"
+    if normalized_type in {"episode", "series"}:
+        return f"/series/{username}/{password}/{stream_id}.{extension}"
+    if normalized_type == "live" and isinstance(timeshift, dict) and timeshift.get("start") and timeshift.get("duration"):
+        return (
+            f"/timeshift/{username}/{password}/"
+            f"{_to_int(timeshift.get('duration'), 0)}/{timeshift.get('start')}/{stream_id}.{extension}"
+        )
+    return f"/live/{username}/{password}/{stream_id}.{extension}"
+
+
+def build_stream_link_candidates(server_info, username, password, content_type, stream_id, extension="ts", timeshift=None):
+    """Build ordered direct stream URL candidates for viewer playback."""
     server_info = normalize_server_info(server_info)
     protocol = str(server_info.get("server_protocol") or "http").lower()
     if protocol not in {"http", "https"}:
         protocol = "http"
     host = server_info.get("url")
     port = server_info.get("port")
+    https_port = server_info.get("https_port")
 
     # Some providers report an incorrect protocol. Normalize obvious port/protocol pairs.
     if port == 80:
@@ -234,22 +249,48 @@ def build_stream_link(server_info, username, password, content_type, stream_id, 
     elif port == 443:
         protocol = "https"
 
-    base = f"{protocol}://{host}:{port}"
+    path = _build_stream_path(username, password, content_type, stream_id, extension=extension, timeshift=timeshift)
+    candidates = []
 
-    normalized_type = (content_type or "live").lower()
-    if normalized_type == "movie":
-        path = f"/movie/{username}/{password}/{stream_id}.{extension}"
-    elif normalized_type in {"episode", "series"}:
-        path = f"/series/{username}/{password}/{stream_id}.{extension}"
-    elif normalized_type == "live" and isinstance(timeshift, dict) and timeshift.get("start") and timeshift.get("duration"):
-        path = (
-            f"/timeshift/{username}/{password}/"
-            f"{_to_int(timeshift.get('duration'), 0)}/{timeshift.get('start')}/{stream_id}.{extension}"
-        )
-    else:
-        path = f"/live/{username}/{password}/{stream_id}.{extension}"
+    # If this app request is secure, prioritize provider https endpoints to avoid browser mixed-content blocking.
+    if request and request.is_secure:
+        if https_port:
+            candidates.append(f"https://{host}:{https_port}{path}")
+        elif port == 443:
+            candidates.append(f"https://{host}:{port}{path}")
 
-    return f"{base}{path}"
+    candidates.append(f"{protocol}://{host}:{port}{path}")
+
+    # Add protocol-swapped fallbacks for common 80/443 misreports.
+    if protocol == "http" and port == 443:
+        candidates.append(f"https://{host}:{port}{path}")
+    elif protocol == "https" and port == 80:
+        candidates.append(f"http://{host}:{port}{path}")
+    elif protocol == "http" and https_port:
+        candidates.append(f"https://{host}:{https_port}{path}")
+
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def build_stream_link(server_info, username, password, content_type, stream_id, extension="ts", timeshift=None):
+    """Build the preferred direct stream URL for live/movie/series resources."""
+    candidates = build_stream_link_candidates(
+        server_info=server_info,
+        username=username,
+        password=password,
+        content_type=content_type,
+        stream_id=stream_id,
+        extension=extension,
+        timeshift=timeshift,
+    )
+    return candidates[0] if candidates else ""
 
 
 def fetch_api_endpoint(url_info):
