@@ -85,12 +85,20 @@ body {
 }
 
 .app-version-badge {
+    display: inline-flex;
+    align-items: center;
     font-size: 0.8rem;
     color: var(--text-primary);
     border: 1px solid var(--border-color);
     padding: 0.35rem 0.6rem;
     border-radius: 999px;
     background: rgba(59, 130, 246, 0.2);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.app-version-badge:hover {
+    background: rgba(59, 130, 246, 0.3);
 }
 
 .logo {
