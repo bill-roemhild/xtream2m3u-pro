@@ -2,6 +2,11 @@ name: Release Please
 
 on:
   workflow_dispatch:
+    inputs:
+      release_as:
+        description: "Optional forced release version (example: 0.2.0)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -18,3 +23,4 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          release-as: ${{ inputs.release_as }}
