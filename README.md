@@ -89,7 +89,14 @@ Then open `http://localhost:5000` (native run is dev HTTP unless you run Gunicor
 3. Log in.
 4. Add at least one service profile.
 5. Click **Connect** to load categories.
-6. Create and save playlists.
+6. Click **Create Playlist**, choose channel groups/channels, enter a playlist name, then click **Save Playlist**.
+7. In **Saved Playlists For Selected Service**, copy:
+   - M3U link (playlist URL)
+   - EPG/XMLTV link
+8. Open your M3U-enabled app/player and add a new playlist/provider using URL mode.
+9. Paste the copied M3U link as the playlist source.
+10. Paste the copied EPG/XMLTV link in the app’s EPG/TV Guide source field.
+11. Save/refresh in your player so channels and guide data load.
 
 ## Environment Variables
 
@@ -119,7 +126,6 @@ Login lockout tuning:
 
 Optional:
 
-- `PROXY_URL` (legacy/default proxy base value; current playlist generation is configured for direct stream URLs)
 - `FORCE_SSL_REMOTE` (default: `true`; redirects non-local HTTP requests to HTTPS)
 - `TRUST_PROXY_HEADERS` (default: `true`; enables `ProxyFix` so `X-Forwarded-*` headers are honored behind reverse proxies)
 - `SSL_CERT_FILE` (default: `/data/tls/tls.crt`; certificate path for native HTTPS listener)
@@ -128,10 +134,8 @@ Optional:
 
 Versioning:
 
-- `APP_VERSION` (optional override for displayed/runtime version)
 - `APP_VERSION_FILE` (default: `/app/VERSION`)
 - `GET /version` returns the current app version for UI display.
-- GitHub Actions Docker builds inject `APP_VERSION` from workflow metadata (tag/sha based).
 
 ## API Summary
 

@@ -1,5 +1,7 @@
-def test_version_endpoint(app_factory):
-    ctx = app_factory(APP_VERSION="2.5.7")
+def test_version_endpoint(app_factory, tmp_path):
+    version_file = tmp_path / "version.txt"
+    version_file.write_text("2.5.7\n", encoding="utf-8")
+    ctx = app_factory(APP_VERSION_FILE=str(version_file))
     response = ctx["client"].get("/version")
     assert response.status_code == 200
     assert response.json["version"] == "2.5.7"
