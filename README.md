@@ -147,179 +147,310 @@ Auth model:
 
 ### Auth and User Management
 
-`GET /auth/status`
+`GET /auth/status` (public)
 
-- Auth: none
-- Required: none
-- Returns setup/login state (`needs_setup`, `authenticated`, `username`, `is_admin`, `user_count`)
+```json
+{
+  "needs_setup": false,
+  "authenticated": true,
+  "username": "admin",
+  "is_admin": true,
+  "user_count": 2
+}
+```
 
-`POST /auth/setup`
+`POST /auth/setup` (public, first-run only)
 
-- Auth: none (first-run only)
-- Required JSON: `username`, `password` (`password` min length 8)
-- Creates the initial admin account and starts an authenticated session
+```json
+{
+  "username": "admin",
+  "password": "password123"
+}
+```
 
-`POST /auth/login`
+`POST /auth/login` (public)
 
-- Auth: none
-- Required JSON: `username`, `password`
-- Returns 429 with `retry_after` when temporary lockout is active
+```json
+{
+  "username": "admin",
+  "password": "password123"
+}
+```
 
-`POST /auth/logout`
+`POST /auth/logout` (login required, no request body)
 
-- Auth: logged-in user
-- Required: none
-- Clears session
+`GET /auth/users` (admin)
 
-`GET /auth/users`
+```json
+{
+  "users": [
+    {
+      "username": "admin",
+      "is_admin": true,
+      "created_at": 1772774362
+    }
+  ]
+}
+```
 
-- Auth: admin
-- Required: none
-- Lists users (without password hashes)
+`POST /auth/users` (admin)
 
-`POST /auth/users`
+```json
+{
+  "username": "james",
+  "password": "password123",
+  "is_admin": false
+}
+```
 
-- Auth: admin
-- Required JSON: `username`, `password`
-- Optional JSON: `is_admin` (bool)
+`POST /auth/users/delete` (admin)
 
-`POST /auth/users/delete`
-
-- Auth: admin
-- Required JSON: `username`
-- Deletes user plus their owned profiles/playlists
-- Cannot delete your own account or the last admin
+```json
+{
+  "username": "james"
+}
+```
 
 ### Backup and Restore
 
-`GET /backup/download`
+`GET /backup/download` (admin)
 
-- Auth: admin
-- Required: none
-- Downloads JSON backup containing `auth_users`, `profiles`, `saved_playlists`
+```json
+{
+  "version": 1,
+  "generated_at": 1772774362,
+  "auth_users": [],
+  "profiles": [],
+  "saved_playlists": []
+}
+```
 
-`POST /backup/restore`
+`POST /backup/restore` (admin, multipart form-data)
 
-- Auth: admin
-- Required multipart form-data: `file` (JSON backup file)
-- Overwrites all stores with backup content
-- Response includes `relogin_required` if current session user no longer exists
+- required form field: `file` (backup JSON)
+
+```json
+{
+  "ok": true,
+  "restored": {
+    "users": 2,
+    "profiles": 4,
+    "saved_playlists": 8
+  },
+  "relogin_required": false
+}
+```
 
 ### Service Profiles
 
-`GET /profiles`
+`GET /profiles` (login required)
 
-- Auth: logged-in user
-- Required: none
-- Admin sees all profiles; non-admin sees only owned profiles
+```json
+{
+  "profiles": [
+    {
+      "name": "demo_service",
+      "url": "http://provider:826",
+      "username": "demo_user",
+      "password": "secret",
+      "include_vod": false,
+      "owner": "admin"
+    }
+  ],
+  "store_path": "/data/credential_profiles.json"
+}
+```
 
-`POST /profiles`
+`POST /profiles` (login required)
 
-- Auth: logged-in user
-- Required JSON: `name`, `url`, `username`, `password`
-- Optional JSON: `include_vod`, `owner` (admin can set owner)
-- Creates or updates profile by `(owner, name)`
+```json
+{
+  "name": "demo_service",
+  "url": "http://provider:826",
+  "username": "demo_user",
+  "password": "secret",
+  "include_vod": false,
+  "owner": "admin"
+}
+```
 
-`POST /profiles/delete`
+`POST /profiles/delete` (login required)
 
-- Auth: logged-in user
-- Required JSON: `name`
-- Optional JSON: `owner` (admin targeted delete)
+```json
+{
+  "name": "demo_service",
+  "owner": "admin"
+}
+```
 
 ### Saved Playlist Presets
 
-`GET /saved-playlists`
+`GET /saved-playlists` (login required)
 
-- Auth: logged-in user
-- Required: none
-- Optional query: `url`, `username`, `owner`
-- Admin filtering supports `owner`; non-admin sees only owned presets
+- optional query: `url`, `username`, `owner` (owner filter works for admin)
 
-`POST /saved-playlists`
+```json
+{
+  "items": [
+    {
+      "id": "60483f9fa4ff",
+      "name": "News Only",
+      "owner": "admin",
+      "created_at": 1772774362,
+      "url": "https://host/playlist/60483f9fa4ff/m3u",
+      "m3u_url": "https://host/playlist/60483f9fa4ff/m3u",
+      "xmltv_url": "https://host/playlist/60483f9fa4ff/xmltv"
+    }
+  ],
+  "store_path": "/data/saved_playlists.json"
+}
+```
 
-- Auth: logged-in user
-- Required JSON: `name`, `url`, `username`, `password`
-- Optional JSON: `id` (update existing), `owner` (admin), `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`, `include_vod`, `include_channel_id`, `channel_id_tag`
-- Returns short M3U/XMLTV URLs for the saved preset
+`POST /saved-playlists` (login required)
 
-`GET /saved-playlists/<id>`
+```json
+{
+  "id": "60483f9fa4ff",
+  "name": "News Only",
+  "url": "http://provider:826",
+  "username": "demo_user",
+  "password": "secret",
+  "owner": "admin",
+  "wanted_groups": "News,Sports",
+  "unwanted_groups": "",
+  "wanted_stream_ids": "10,12",
+  "unwanted_stream_ids": "",
+  "include_vod": false,
+  "include_channel_id": false,
+  "channel_id_tag": "channel-id"
+}
+```
 
-- Auth: logged-in user
-- Required path: `id`
-- Admin can fetch any; non-admin only own preset
+`GET /saved-playlists/<id>` (login required, owner-scoped for non-admin)
 
-`POST /saved-playlists/delete`
+```json
+{
+  "id": "60483f9fa4ff",
+  "name": "News Only",
+  "created_at": 1772774362,
+  "owner": "admin",
+  "config": {
+    "url": "http://provider:826",
+    "username": "demo_user",
+    "password": "secret"
+  }
+}
+```
 
-- Auth: logged-in user
-- Required JSON: `id`
-- Admin can delete any; non-admin only own preset
+`POST /saved-playlists/delete` (login required)
+
+```json
+{
+  "id": "60483f9fa4ff"
+}
+```
 
 ### Generated Output Endpoints
 
-`GET|POST /m3u`
+`GET|POST /m3u` (public)
 
-- Auth: none (public endpoint)
-- Required params (query for GET, JSON for POST): `url`, `username`, `password`
-- Optional filters: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`
-- Optional options: `include_vod`, `include_channel_id`, `channel_id_tag`
+- required inputs: `url`, `username`, `password`
+- optional inputs: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`, `include_vod`, `include_channel_id`, `channel_id_tag`
 
-`GET /xmltv`
+POST JSON example:
 
-- Auth: none (public endpoint)
-- Required query: `url`, `username`, `password`
-- Optional filters: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`
+```json
+{
+  "url": "http://provider:826",
+  "username": "demo_user",
+  "password": "secret",
+  "wanted_groups": "News,Sports",
+  "wanted_stream_ids": "10,12",
+  "include_vod": false
+}
+```
 
-`GET /playlist/<id>/m3u`
+`GET /xmltv` (public)
 
-- Auth: none (public endpoint)
-- Required path: `id`
-- Optional query: `preview=true|1|yes|on` (returns plain text preview instead of attachment)
+- required query: `url`, `username`, `password`
+- optional query: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`
 
-`GET /playlist/<id>/xmltv`
+`GET /playlist/<id>/m3u` (public)
 
-- Auth: none (public endpoint)
-- Required path: `id`
-- Optional query: `preview=true|1|yes|on` (returns inline XML instead of attachment)
+- optional query: `preview=true|1|yes|on`
+
+`GET /playlist/<id>/xmltv` (public)
+
+- optional query: `preview=true|1|yes|on`
 
 ### Service Data and Viewer Support
 
-`GET /subscription`
+`GET /subscription` (login required)
 
-- Auth: logged-in user
-- Required query: `url`, `username`, `password`
-- Returns normalized subscription and server details
+- required query: `url`, `username`, `password`
 
-`GET /categories`
+```json
+{
+  "status": "Active",
+  "profile": {
+    "username": "demo_user",
+    "max_connections": 5
+  },
+  "server": {
+    "url": "provider.host",
+    "port": 826
+  }
+}
+```
 
-- Auth: logged-in user
-- Required query: `url`, `username`, `password`
-- Optional query: `include_vod=true|false`
-- Returns `categories` plus `streams`
+`GET /categories` (login required)
 
-`GET /stream-link`
+- required query: `url`, `username`, `password`
+- optional query: `include_vod=true|false`
 
-- Auth: logged-in user
-- Required query: `url`, `username`, `password`, `stream_id`
-- Optional query: `content_type` (`live` default), `extension` (`ts` default), `timeshift_start`, `timeshift_duration`
-- Returns proxy URL candidates for viewer playback
+```json
+{
+  "categories": [],
+  "streams": []
+}
+```
 
-`GET /stream-proxy/<encoded-upstream-url>`
+`GET /stream-link` (login required)
 
-- Auth: none (public endpoint)
-- Required path: URL-encoded upstream media URL
-- Proxies TS/HLS; rewrites HLS manifests so segment/key requests continue through app proxy
+- required query: `url`, `username`, `password`, `stream_id`
+- optional query: `content_type`, `extension`, `timeshift_start`, `timeshift_duration`
 
-`GET /image-proxy/<encoded-image-url>`
+```json
+{
+  "url": "https://host/stream-proxy/http%3A%2F%2Fprovider%2Flive%2Fu%2Fp%2F72.ts",
+  "candidates": [
+    "https://host/stream-proxy/http%3A%2F%2Fprovider%2Flive%2Fu%2Fp%2F72.ts"
+  ],
+  "content_type": "live",
+  "stream_id": "72",
+  "extension": "ts",
+  "timeshift": {
+    "start": null,
+    "duration": null
+  }
+}
+```
 
-- Auth: none (public endpoint)
-- Required path: URL-encoded image URL
-- Proxies images for logo/CORS compatibility
+`GET /stream-proxy/<encoded-upstream-url>` (public)
 
-`GET /version`
+- required path: URL-encoded upstream media URL
 
-- Auth: none
-- Required: none
-- Returns current runtime app version
+`GET /image-proxy/<encoded-image-url>` (public)
+
+- required path: URL-encoded image URL
+
+`GET /version` (public)
+
+```json
+{
+  "version": "0.2.5"
+}
+```
 
 ## Backup / Restore Behavior
 
