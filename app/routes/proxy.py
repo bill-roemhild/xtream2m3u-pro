@@ -1,15 +1,60 @@
 """Proxy routes for images and streams"""
 import logging
+import re
 import urllib.parse
 
 import requests
-from flask import Blueprint, Response
+from flask import Blueprint, Response, request
 
+from app.utils import encode_url
 from app.utils.streaming import generate_streaming_response, stream_request
 
 logger = logging.getLogger(__name__)
 
 proxy_bp = Blueprint('proxy', __name__)
+
+
+def _proxied_stream_url(original_url):
+    base = request.host_url.rstrip("/")
+    return f"{base}/stream-proxy/{encode_url(original_url)}"
+
+
+def _rewrite_hls_manifest(manifest_text, source_url):
+    """Rewrite HLS manifest URIs so segment/key requests stay within this app proxy."""
+    if not manifest_text:
+        return manifest_text
+
+    def to_absolute(uri):
+        raw = str(uri or "").strip()
+        if not raw:
+            return raw
+        if raw.startswith("http://") or raw.startswith("https://"):
+            return raw
+        return urllib.parse.urljoin(source_url, raw)
+
+    def rewrite_attr_uri(match):
+        original = match.group(1)
+        absolute = to_absolute(original)
+        return f'URI="{_proxied_stream_url(absolute)}"'
+
+    rewritten_lines = []
+    for raw_line in manifest_text.splitlines():
+        line = raw_line.rstrip("\r")
+        stripped = line.strip()
+        if not stripped:
+            rewritten_lines.append(line)
+            continue
+
+        if stripped.startswith("#"):
+            # Rewrite URI attributes in tags like EXT-X-KEY / EXT-X-MAP.
+            line = re.sub(r'URI="([^"]+)"', rewrite_attr_uri, line)
+            rewritten_lines.append(line)
+            continue
+
+        absolute = to_absolute(stripped)
+        rewritten_lines.append(_proxied_stream_url(absolute))
+
+    return "\n".join(rewritten_lines) + ("\n" if manifest_text.endswith("\n") else "")
 
 
 @proxy_bp.route("/image-proxy/<path:image_url>")
@@ -57,6 +102,16 @@ def proxy_stream(stream_url):
                 content_type = "application/vnd.apple.mpegurl"
             else:
                 content_type = "application/octet-stream"
+
+        # Rewrite HLS manifests so subsequent segment/key requests stay in /stream-proxy.
+        is_hls = (
+            original_url.endswith(".m3u8")
+            or "mpegurl" in content_type.lower()
+            or "m3u8" in content_type.lower()
+        )
+        if is_hls:
+            rewritten = _rewrite_hls_manifest(response.text, response.url or original_url)
+            return Response(rewritten, status=200, mimetype=content_type)
 
         logger.info(f"Using content type: {content_type}")
         return generate_streaming_response(response, content_type)

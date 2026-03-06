@@ -36,6 +36,35 @@ def test_stream_proxy_public_without_auth(app_ctx, monkeypatch):
     assert response.status_code == 504
 
 
+def test_stream_proxy_rewrites_hls_manifest_urls(app_ctx, monkeypatch):
+    import app.routes.proxy as proxy_module
+
+    class _Resp:
+        def __init__(self):
+            self.headers = {"Content-Type": "application/vnd.apple.mpegurl"}
+            self.url = "http://provider/live/u/p/playlist.m3u8"
+            self.text = (
+                "#EXTM3U\n"
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"key.key\"\n"
+                "seg1.ts\n"
+                "/hlsr/token/seg2.ts\n"
+                "http://cdn.example/seg3.ts\n"
+            )
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(proxy_module, "stream_request", lambda _url, timeout=60: _Resp())
+    response = app_ctx["client"].get("/stream-proxy/http%3A%2F%2Fprovider%2Flive%2Fu%2Fp%2Fplaylist.m3u8")
+    assert response.status_code == 200
+    body = response.data.decode("utf-8")
+    assert "/stream-proxy/" in body
+    assert "provider%2Flive%2Fu%2Fp%2Fseg1.ts" in body
+    assert "provider%2Fhlsr%2Ftoken%2Fseg2.ts" in body
+    assert "cdn.example%2Fseg3.ts" in body
+    assert "provider%2Flive%2Fu%2Fp%2Fkey.key" in body
+
+
 def test_protected_route_requires_setup_then_login(app_ctx):
     client = app_ctx["client"]
 
