@@ -1,6 +1,7 @@
 """Services package"""
 from .m3u_generator import generate_m3u_playlist
 from .xtream_api import (
+    build_stream_link_candidates,
     build_stream_link,
     fetch_catalog,
     fetch_api_data,
@@ -26,6 +27,7 @@ __all__ = [
     'fetch_vod_info',
     'fetch_series_info',
     'fetch_catalog',
+    'build_stream_link_candidates',
     'build_stream_link',
     'normalize_user_info',
     'normalize_server_info',

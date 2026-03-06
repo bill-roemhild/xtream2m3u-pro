@@ -1560,10 +1560,15 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
                 continue;
             }
             const streamUrl = String(data.url || '').trim();
-            if (!streamUrl) {
+            const backendCandidates = Array.isArray(data.candidates)
+                ? data.candidates.map((item) => String(item || '').trim()).filter(Boolean)
+                : [];
+            if (!streamUrl && backendCandidates.length === 0) {
                 continue;
             }
-            const streamCandidates = buildStreamUrlCandidates(streamUrl);
+            const streamCandidates = backendCandidates.length > 0
+                ? backendCandidates
+                : buildStreamUrlCandidates(streamUrl);
             for (const candidate of streamCandidates) {
                 const ok = await tryPlayChannelViewerStream(candidate, ext);
                 if (ok) {
