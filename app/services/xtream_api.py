@@ -233,7 +233,16 @@ def _build_stream_path(username, password, content_type, stream_id, extension="t
     return f"/live/{username}/{password}/{stream_id}.{extension}"
 
 
-def build_stream_link_candidates(server_info, username, password, content_type, stream_id, extension="ts", timeshift=None):
+def build_stream_link_candidates(
+    server_info,
+    username,
+    password,
+    content_type,
+    stream_id,
+    extension="ts",
+    timeshift=None,
+    source_url=None,
+):
     """Build ordered direct stream URL candidates for viewer playback."""
     server_info = normalize_server_info(server_info)
     protocol = str(server_info.get("server_protocol") or "http").lower()
@@ -241,33 +250,26 @@ def build_stream_link_candidates(server_info, username, password, content_type, 
         protocol = "http"
     host = server_info.get("url")
     port = server_info.get("port")
-    https_port = server_info.get("https_port")
-
-    # Some providers report an incorrect protocol. Normalize obvious port/protocol pairs.
-    if port == 80:
-        protocol = "http"
-    elif port == 443:
-        protocol = "https"
 
     path = _build_stream_path(username, password, content_type, stream_id, extension=extension, timeshift=timeshift)
     candidates = []
 
-    # If this app request is secure, prioritize provider https endpoints to avoid browser mixed-content blocking.
-    if request and request.is_secure:
-        if https_port:
-            candidates.append(f"https://{host}:{https_port}{path}")
-        elif port == 443:
-            candidates.append(f"https://{host}:{port}{path}")
-
+    # Primary: use provider-reported server URL directly.
     candidates.append(f"{protocol}://{host}:{port}{path}")
 
-    # Add protocol-swapped fallbacks for common 80/443 misreports.
-    if protocol == "http" and port == 443:
-        candidates.append(f"https://{host}:{port}{path}")
-    elif protocol == "https" and port == 80:
-        candidates.append(f"http://{host}:{port}{path}")
-    elif protocol == "http" and https_port:
-        candidates.append(f"https://{host}:{https_port}{path}")
+    # Fallback: use the exact service URL provided by the user.
+    if source_url:
+        try:
+            parsed = urllib.parse.urlparse(str(source_url).strip())
+            source_scheme = (parsed.scheme or "http").lower()
+            source_host = parsed.hostname or host
+            source_port = parsed.port
+            if source_port is None:
+                source_port = 443 if source_scheme == "https" else 80
+            if source_host:
+                candidates.append(f"{source_scheme}://{source_host}:{source_port}{path}")
+        except Exception:
+            pass
 
     deduped = []
     seen = set()
@@ -289,6 +291,7 @@ def build_stream_link(server_info, username, password, content_type, stream_id, 
         stream_id=stream_id,
         extension=extension,
         timeshift=timeshift,
+        source_url=None,
     )
     return candidates[0] if candidates else ""
 
