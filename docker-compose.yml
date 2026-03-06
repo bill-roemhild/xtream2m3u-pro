@@ -2,6 +2,9 @@ name: xtream2m3u-pro
 
 services:
   xtream2m3uV2:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ghcr.io/bill-roemhild/xtream2m3u-pro:latest
     container_name: xtream2m3u-pro
     ports:
