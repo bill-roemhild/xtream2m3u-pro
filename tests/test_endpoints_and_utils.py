@@ -141,7 +141,7 @@ def test_stream_link_endpoint_with_mocked_validation(admin_ctx, monkeypatch):
     assert "http%3A%2F%2Fprovider.host%3A80%2Flive%2Fu%2Fp%2F72.ts" in response.json["url"]
 
 
-def test_stream_link_secure_request_prefers_https_candidate(admin_ctx, monkeypatch):
+def test_stream_link_secure_request_still_uses_provider_url(admin_ctx, monkeypatch):
     client = admin_ctx["client"]
     api = admin_ctx["api"]
 
@@ -169,7 +169,7 @@ def test_stream_link_secure_request_prefers_https_candidate(admin_ctx, monkeypat
     )
     assert response.status_code == 200
     assert "/stream-proxy/" in response.json["url"]
-    assert "https%3A%2F%2Fprovider.host%3A443%2Flive%2Fu%2Fp%2F72.ts" in response.json["url"]
+    assert "http%3A%2F%2Fprovider.host%3A80%2Flive%2Fu%2Fp%2F72.ts" in response.json["url"]
     assert response.json["candidates"][0] == response.json["url"]
 
 
