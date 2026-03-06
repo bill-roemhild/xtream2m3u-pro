@@ -1,40 +1,15 @@
 """Proxy routes for images and streams"""
 import logging
 import urllib.parse
-import json
-import os
-from pathlib import Path
 
 import requests
-from flask import Blueprint, Response, jsonify, request, session
+from flask import Blueprint, Response
 
 from app.utils.streaming import generate_streaming_response, stream_request
 
 logger = logging.getLogger(__name__)
 
 proxy_bp = Blueprint('proxy', __name__)
-AUTH_STORE_PATH = Path(os.environ.get("AUTH_STORE_PATH", "/data/auth_users.json"))
-
-
-def _has_users():
-    try:
-        if not AUTH_STORE_PATH.exists():
-            return False
-        raw = json.loads(AUTH_STORE_PATH.read_text(encoding="utf-8"))
-        return isinstance(raw, dict) and isinstance(raw.get("users"), list) and len(raw.get("users", [])) > 0
-    except Exception:
-        return False
-
-
-@proxy_bp.before_request
-def require_authentication():
-    if request.method == "OPTIONS":
-        return None
-    if not _has_users():
-        return jsonify({"error": "Setup Required", "details": "Create the first admin account first"}), 403
-    if not (bool(session.get("authenticated")) and bool(session.get("username"))):
-        return jsonify({"error": "Unauthorized", "details": "Login required"}), 401
-    return None
 
 
 @proxy_bp.route("/image-proxy/<path:image_url>")

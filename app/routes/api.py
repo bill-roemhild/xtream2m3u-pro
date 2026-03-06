@@ -21,7 +21,7 @@ from app.services import (
     normalize_user_info,
     validate_xtream_credentials,
 )
-from app.utils import group_matches, parse_group_list
+from app.utils import encode_url, group_matches, parse_group_list
 
 logger = logging.getLogger(__name__)
 
@@ -720,7 +720,7 @@ def build_playlist_from_config(config):
     url = config.get("url")
     username = config.get("username")
     password = config.get("password")
-    proxy_url = None
+    proxy_url = request.host_url.rstrip("/")
     if not url or not username or not password:
         return None, None, {"error": "Missing Parameters", "details": "Required: url, username, password"}, 400
 
@@ -728,7 +728,7 @@ def build_playlist_from_config(config):
     unwanted_groups = parse_group_list(config.get("unwanted_groups", ""))
     wanted_stream_ids = parse_stream_id_list(config.get("wanted_stream_ids", ""))
     unwanted_stream_ids = parse_stream_id_list(config.get("unwanted_stream_ids", ""))
-    no_stream_proxy = True
+    no_stream_proxy = False
     include_vod = str(config.get("include_vod", "false")).lower() == "true"
     include_channel_id = str(config.get("include_channel_id", "false")).lower() == "true"
     channel_id_tag = str(config.get("channel_id_tag", "channel-id"))
@@ -1291,7 +1291,7 @@ def get_stream_link():
         extension=extension,
         timeshift={"start": timeshift_start, "duration": timeshift_duration},
     )
-    link = candidates[0] if candidates else build_stream_link(
+    upstream_link = candidates[0] if candidates else build_stream_link(
         server_info=user_data.get("server_info"),
         username=username,
         password=password,
@@ -1300,11 +1300,16 @@ def get_stream_link():
         extension=extension,
         timeshift={"start": timeshift_start, "duration": timeshift_duration},
     )
+    if not candidates and upstream_link:
+        candidates = [upstream_link]
+    proxy_base = request.host_url.rstrip("/")
+    proxy_candidates = [f"{proxy_base}/stream-proxy/{encode_url(link)}" for link in candidates if link]
+    link = proxy_candidates[0] if proxy_candidates else ""
 
     return jsonify(
         {
             "url": link,
-            "candidates": candidates,
+            "candidates": proxy_candidates,
             "content_type": content_type,
             "stream_id": stream_id,
             "extension": extension,
@@ -1369,7 +1374,7 @@ def generate_m3u():
         wanted_groups = parse_group_list(data.get("wanted_groups", ""))
         unwanted_stream_ids = parse_stream_id_list(data.get("unwanted_stream_ids", ""))
         wanted_stream_ids = parse_stream_id_list(data.get("wanted_stream_ids", ""))
-        no_stream_proxy = True
+        no_stream_proxy = False
         include_vod = str(data.get("include_vod", "false")).lower() == "true"
         include_channel_id = str(data.get("include_channel_id", "false")).lower() == "true"
         channel_id_tag = str(data.get("channel_id_tag", "channel-id"))
@@ -1379,7 +1384,7 @@ def generate_m3u():
         wanted_groups = parse_group_list(request.args.get("wanted_groups", ""))
         unwanted_stream_ids = parse_stream_id_list(request.args.get("unwanted_stream_ids", ""))
         wanted_stream_ids = parse_stream_id_list(request.args.get("wanted_stream_ids", ""))
-        no_stream_proxy = True
+        no_stream_proxy = False
         include_vod = request.args.get("include_vod", "false").lower() == "true"
         include_channel_id = request.args.get("include_channel_id", "false") == "true"
         channel_id_tag = request.args.get("channel_id_tag", "channel-id")
