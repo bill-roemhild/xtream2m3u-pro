@@ -14,11 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def _load_app_version():
-    """Resolve app version from env or VERSION file."""
-    env_version = str(os.environ.get("APP_VERSION", "")).strip()
-    if env_version and env_version.lower() not in {"latest", "main", "master"}:
-        return env_version
-
+    """Resolve app version from VERSION file."""
     version_file = Path(os.environ.get("APP_VERSION_FILE", "/app/VERSION"))
     try:
         if version_file.exists():
@@ -84,9 +80,6 @@ def create_app():
     app.config['SECRET_KEY'] = _load_or_create_secret_key()
     app.config['APP_VERSION'] = _load_app_version()
     app.config['FORCE_SSL_REMOTE'] = _env_bool("FORCE_SSL_REMOTE", True)
-
-    # Get default proxy URL from environment variable
-    app.config['DEFAULT_PROXY_URL'] = os.environ.get("PROXY_URL")
 
     if _env_bool("TRUST_PROXY_HEADERS", True):
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)

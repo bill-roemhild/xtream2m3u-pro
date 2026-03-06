@@ -119,7 +119,6 @@ Login lockout tuning:
 
 Optional:
 
-- `PROXY_URL` (legacy/default proxy base value; current playlist generation is configured for direct stream URLs)
 - `FORCE_SSL_REMOTE` (default: `true`; redirects non-local HTTP requests to HTTPS)
 - `TRUST_PROXY_HEADERS` (default: `true`; enables `ProxyFix` so `X-Forwarded-*` headers are honored behind reverse proxies)
 - `SSL_CERT_FILE` (default: `/data/tls/tls.crt`; certificate path for native HTTPS listener)
@@ -128,10 +127,8 @@ Optional:
 
 Versioning:
 
-- `APP_VERSION` (optional override for displayed/runtime version)
 - `APP_VERSION_FILE` (default: `/app/VERSION`)
 - `GET /version` returns the current app version for UI display.
-- GitHub Actions Docker builds inject `APP_VERSION` from workflow metadata (tag/sha based).
 
 ## API Summary
 
