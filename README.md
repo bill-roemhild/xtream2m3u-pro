@@ -54,11 +54,22 @@ Defaults:
 docker compose up -d --build
 ```
 
+If you are starting from scratch locally, set up the repo first:
+
+```bash
+git clone https://github.com/bill-roemhild/xtream2m3u-pro.git
+cd xtream2m3u-pro
+git checkout development
+git pull origin development
+```
+
 With the provided compose file:
 
 - Container listens on `5000`
-- Host mapping is `5001:5000`
-- UI URL: `http://localhost:5001`
+- Host mapping is `5000:5000`
+- UI URL: `https://localhost:5000`
+- On first startup, the container auto-generates a self-signed certificate under `/data/tls`.
+- Browsers will show a certificate warning unless you install/trust your own cert.
 
 Data is persisted in a Docker volume (`xtream2m3u_data`) mounted at `/data`.
 
@@ -66,10 +77,10 @@ Data is persisted in a Docker volume (`xtream2m3u_data`) mounted at `/data`.
 
 ```bash
 pip install -r requirements.txt
-python run.py --port 5001
+python run.py --port 5000
 ```
 
-Then open `http://localhost:5001`.
+Then open `http://localhost:5000` (native run is dev HTTP unless you run Gunicorn with cert/key flags).
 
 ## First-Run Flow
 
@@ -109,6 +120,11 @@ Login lockout tuning:
 Optional:
 
 - `PROXY_URL` (legacy/default proxy base value; current playlist generation is configured for direct stream URLs)
+- `FORCE_SSL_REMOTE` (default: `true`; redirects non-local HTTP requests to HTTPS)
+- `TRUST_PROXY_HEADERS` (default: `true`; enables `ProxyFix` so `X-Forwarded-*` headers are honored behind reverse proxies)
+- `SSL_CERT_FILE` (default: `/data/tls/tls.crt`; certificate path for native HTTPS listener)
+- `SSL_KEY_FILE` (default: `/data/tls/tls.key`; private key path for native HTTPS listener)
+- `SSL_CERT_SUBJECT` (optional; subject used when auto-generating self-signed cert, default `/CN=xtream2m3u.local`)
 
 Versioning:
 
