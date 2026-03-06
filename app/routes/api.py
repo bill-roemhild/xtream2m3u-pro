@@ -1027,7 +1027,8 @@ def delete_profile():
 def list_saved_playlists():
     """List saved playlist presets."""
     all_items = load_saved_playlists()
-    if _is_admin():
+    is_admin = _is_admin()
+    if is_admin:
         items = all_items
     else:
         current_user = _current_username()
@@ -1035,6 +1036,10 @@ def list_saved_playlists():
 
     service_url = (request.args.get("url") or "").strip()
     service_username = (request.args.get("username") or "").strip()
+    service_owner = (request.args.get("owner") or "").strip()
+    if is_admin and service_owner:
+        items = [item for item in items if str(item.get("owner", "")).strip() == service_owner]
+
     if service_url and service_username:
         items = [
             item for item in items
