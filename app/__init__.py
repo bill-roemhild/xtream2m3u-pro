@@ -1,10 +1,12 @@
 """Flask application factory and configuration"""
+import ipaddress
 import logging
 import os
 import secrets
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, redirect, request
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +52,30 @@ def _load_or_create_secret_key():
         return secrets.token_hex(32)
 
 
+def _env_bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_local_host(host):
+    if not host:
+        return False
+    host_value = str(host).strip()
+    if host_value.startswith("[") and "]" in host_value:
+        host_value = host_value[1:host_value.index("]")]
+    else:
+        host_value = host_value.split(":", 1)[0]
+
+    if host_value.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host_value).is_loopback
+    except ValueError:
+        return False
+
+
 def create_app():
     """Create and configure the Flask application"""
     app = Flask(__name__,
@@ -57,9 +83,25 @@ def create_app():
                 template_folder='../frontend')
     app.config['SECRET_KEY'] = _load_or_create_secret_key()
     app.config['APP_VERSION'] = _load_app_version()
+    app.config['FORCE_SSL_REMOTE'] = _env_bool("FORCE_SSL_REMOTE", True)
 
     # Get default proxy URL from environment variable
     app.config['DEFAULT_PROXY_URL'] = os.environ.get("PROXY_URL")
+
+    if _env_bool("TRUST_PROXY_HEADERS", True):
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+    @app.before_request
+    def enforce_ssl_for_remote_clients():
+        """Redirect non-local HTTP requests to HTTPS."""
+        if not app.config.get('FORCE_SSL_REMOTE'):
+            return None
+        if request.is_secure:
+            return None
+        if _is_local_host(request.host):
+            return None
+        target = request.url.replace("http://", "https://", 1)
+        return redirect(target, code=301)
 
     # Register blueprints
     from app.routes.api import api_bp

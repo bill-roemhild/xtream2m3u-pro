@@ -4,7 +4,7 @@ This guide walks through the full flow to create a playlist, starting from addin
 
 ## 1. Open the App
 
-1. Open the web UI (example: `http://localhost:5001`).
+1. Open the web UI (example: `https://localhost:5000`).
 2. Log in.
 3. If this is first run, create the initial admin account first.
 
@@ -54,6 +54,8 @@ For each saved playlist entry, use:
 
 - **M3U URL**: `http(s)://<host>/playlist/<id>/m3u`
 - **XMLTV URL**: `http(s)://<host>/playlist/<id>/xmltv`
+
+If you use the provided Docker Compose setup, use `https://<host>:5000/...`.
 
 Available actions in list:
 
