@@ -1,6 +1,9 @@
 name: Build and Push Docker Image
 
 on:
+  release:
+    types:
+      - published
   workflow_dispatch:
     inputs:
       app_version:
@@ -35,6 +38,10 @@ jobs:
         run: |
           if [ -n "${{ inputs.app_version }}" ]; then
             echo "value=${{ inputs.app_version }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "release" ] && [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            TAG="${TAG#v}"
+            echo "value=$TAG" >> "$GITHUB_OUTPUT"
           elif [ -f VERSION ]; then
             echo "value=$(cat VERSION)" >> "$GITHUB_OUTPUT"
           else
