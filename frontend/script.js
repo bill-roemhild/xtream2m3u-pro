@@ -1930,10 +1930,15 @@ async function loadSavedPlaylistsList() {
     try {
         const serviceUrl = document.getElementById('url').value.trim();
         const serviceUsername = document.getElementById('username').value.trim();
+        const activeProfile = getActiveProfile();
+        const serviceOwner = String(activeProfile?.owner || '').trim();
         const params = new URLSearchParams({
             url: serviceUrl,
             username: serviceUsername
         });
+        if (serviceOwner) {
+            params.set('owner', serviceOwner);
+        }
         const response = await fetch(`/saved-playlists?${params.toString()}`);
         const data = await response.json();
         if (!response.ok) {

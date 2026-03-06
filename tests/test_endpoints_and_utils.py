@@ -83,7 +83,7 @@ def test_stream_proxy_falls_back_on_https_port_80(app_ctx, monkeypatch):
     def _request(url, timeout=60):
         calls.append(url)
         if url.startswith("https://provider:80/"):
-            raise proxy_module.requests.SSLError("wrong version number")
+            raise proxy_module.requests.exceptions.SSLError("wrong version number")
         return _Resp()
 
     monkeypatch.setattr(proxy_module, "stream_request", _request)
