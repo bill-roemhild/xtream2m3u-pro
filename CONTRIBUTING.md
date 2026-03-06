@@ -26,9 +26,11 @@ gh auth status -h github.com
 ```bash
 git clone https://github.com/bill-roemhild/xtream2m3u-pro.git
 cd xtream2m3u-pro
+git checkout development
+git pull origin development
 ```
 
-Create a feature branch:
+Create a feature branch from `development`:
 
 ```bash
 git checkout -b feat/short-description
@@ -80,7 +82,7 @@ Push branch:
 git push -u origin feat/short-description
 ```
 
-Open PR to `main`.
+Open PR to `development`.
 
 ## 6. CI Behavior (Automatic)
 
@@ -143,8 +145,10 @@ git push
 
 This repo is currently configured so the most reliable publish flow is:
 
-1. Ensure `main` contains the desired code and version files.
-2. Create a GitHub release tag from `main`:
+1. Merge your feature PR into `development`.
+2. Promote `development` to `main` (PR or merge commit, based on your repo policy).
+3. Ensure `main` contains the desired code and version files.
+4. Create a GitHub release tag from `main`:
 
 ```bash
 gh release create v0.1.1 \
@@ -154,25 +158,25 @@ gh release create v0.1.1 \
   --notes "Release v0.1.1"
 ```
 
-3. Confirm release exists:
+5. Confirm release exists:
 
 ```bash
 gh release list -R bill-roemhild/xtream2m3u-pro --limit 5
 ```
 
-4. Confirm Docker publish run started:
+6. Confirm Docker publish run started:
 
 ```bash
 gh run list -R bill-roemhild/xtream2m3u-pro --workflow "Build and Push Docker Image" --limit 5
 ```
 
-5. Watch run to completion:
+7. Watch run to completion:
 
 ```bash
 gh run watch <RUN_ID> -R bill-roemhild/xtream2m3u-pro --exit-status
 ```
 
-6. Confirm package tags in logs:
+8. Confirm package tags in logs:
 
 ```bash
 gh run view <RUN_ID> -R bill-roemhild/xtream2m3u-pro --log | rg "pushing manifest for ghcr.io"
@@ -209,12 +213,13 @@ After publish:
 
 For urgent fixes:
 
-1. Branch from current `main`.
+1. Branch from current `development`.
 2. Apply minimal change.
 3. Run tests.
 4. Bump patch version (`X.Y.Z` -> `X.Y.(Z+1)`).
-5. Merge to `main`.
-6. Publish with Section 8 flow.
+5. Merge to `development`.
+6. Promote `development` to `main`.
+7. Publish with Section 8 flow.
 
 ## 12. Commit Message Guidance
 
