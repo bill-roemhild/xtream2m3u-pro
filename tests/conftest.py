@@ -30,7 +30,6 @@ def app_factory(tmp_path, monkeypatch):
             "AUTH_THROTTLE_STORE_PATH": str(paths["throttle"]),
             "FLASK_SECRET_FILE": str(paths["secret"]),
             "CREDENTIAL_CIPHER_FILE": str(paths["cipher"]),
-            "APP_VERSION": "9.9.9-test",
             "AUTH_MAX_LOGIN_ATTEMPTS": "5",
             "AUTH_ATTEMPT_WINDOW_SECONDS": "300",
             "AUTH_LOCKOUT_SECONDS": "300",

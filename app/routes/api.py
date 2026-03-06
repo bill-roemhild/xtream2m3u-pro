@@ -878,12 +878,12 @@ def get_required_params():
         url = data.get("url")
         username = data.get("username")
         password = data.get("password")
-        proxy_url = data.get("proxy_url", current_app.config['DEFAULT_PROXY_URL']) or request.host_url.rstrip("/")
+        proxy_url = data.get("proxy_url") or request.host_url.rstrip("/")
     else:
         url = request.args.get("url")
         username = request.args.get("username")
         password = request.args.get("password")
-        proxy_url = request.args.get("proxy_url", current_app.config['DEFAULT_PROXY_URL']) or request.host_url.rstrip("/")
+        proxy_url = request.args.get("proxy_url") or request.host_url.rstrip("/")
 
     if not url or not username or not password:
         return (
