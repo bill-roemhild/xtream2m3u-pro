@@ -19,6 +19,41 @@ def _proxied_stream_url(original_url):
     return f"{base}/stream-proxy/{encode_url(original_url)}"
 
 
+def _stream_proxy_candidates(original_url):
+    """Return ordered upstream URL candidates for resilient playback."""
+    base = str(original_url or "").strip()
+    if not base:
+        return []
+
+    candidates = [base]
+    try:
+        parsed = urllib.parse.urlparse(base)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"http", "https"}:
+            return candidates
+
+        port = parsed.port
+        if port is None:
+            return candidates
+
+        # Some providers report conflicting scheme/port combinations.
+        if scheme == "https" and port == 80:
+            candidates.append(parsed._replace(scheme="http").geturl())
+        elif scheme == "http" and port == 443:
+            candidates.append(parsed._replace(scheme="https").geturl())
+    except Exception:
+        return candidates
+
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
 def _rewrite_hls_manifest(manifest_text, source_url):
     """Rewrite HLS manifest URIs so segment/key requests stay within this app proxy."""
     if not manifest_text:
@@ -90,35 +125,64 @@ def proxy_stream(stream_url):
         original_url = urllib.parse.unquote(stream_url)
         logger.info(f"Stream proxy request for: {original_url}")
 
-        response = stream_request(original_url, timeout=60)  # Longer timeout for live streams
-        response.raise_for_status()
+        response = None
+        selected_url = original_url
+        attempts = _stream_proxy_candidates(original_url)
+        last_error = None
+
+        for candidate in attempts:
+            selected_url = candidate
+            try:
+                response = stream_request(candidate, timeout=60)  # Longer timeout for live streams
+                response.raise_for_status()
+                break
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.HTTPError,
+                requests.exceptions.RequestException,
+            ) as exc:
+                last_error = exc
+                logger.warning(f"Stream proxy candidate failed: {candidate} ({type(exc).__name__}: {exc})")
+                response = None
+
+        if response is None:
+            if isinstance(last_error, requests.exceptions.Timeout):
+                return Response("Stream timeout", status=504)
+            if isinstance(last_error, requests.exceptions.HTTPError) and getattr(last_error, "response", None) is not None:
+                status = last_error.response.status_code
+                return Response(f"Failed to fetch stream: {str(last_error)}", status=status)
+            if isinstance(last_error, requests.exceptions.SSLError):
+                return Response("TLS failure connecting to upstream stream", status=502)
+            if isinstance(last_error, requests.exceptions.RequestException):
+                return Response("Failed to fetch stream from upstream provider", status=502)
+            return Response("Failed to process stream", status=500)
 
         # Determine content type
         content_type = response.headers.get("Content-Type")
         if not content_type:
-            if original_url.endswith(".ts"):
+            if selected_url.endswith(".ts"):
                 content_type = "video/MP2T"
-            elif original_url.endswith(".m3u8"):
+            elif selected_url.endswith(".m3u8"):
                 content_type = "application/vnd.apple.mpegurl"
             else:
                 content_type = "application/octet-stream"
 
         # Rewrite HLS manifests so subsequent segment/key requests stay in /stream-proxy.
         is_hls = (
-            original_url.endswith(".m3u8")
+            selected_url.endswith(".m3u8")
             or "mpegurl" in content_type.lower()
             or "m3u8" in content_type.lower()
         )
         if is_hls:
-            rewritten = _rewrite_hls_manifest(response.text, response.url or original_url)
+            rewritten = _rewrite_hls_manifest(response.text, response.url or selected_url)
             return Response(rewritten, status=200, mimetype=content_type)
 
         logger.info(f"Using content type: {content_type}")
         return generate_streaming_response(response, content_type)
-    except requests.Timeout:
+    except requests.exceptions.Timeout:
         logger.error(f"Timeout connecting to stream: {original_url}")
         return Response("Stream timeout", status=504)
-    except requests.HTTPError as e:
+    except requests.exceptions.HTTPError as e:
         logger.error(f"HTTP error fetching stream: {e.response.status_code} - {original_url}")
         return Response(f"Failed to fetch stream: {str(e)}", status=e.response.status_code)
     except Exception as e:
