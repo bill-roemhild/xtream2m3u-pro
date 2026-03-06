@@ -1,5 +1,7 @@
 # xtream2m3u-pro
 
+> Thanks to the original project at https://github.com/ovosimpatico/xtream2m3u for the base code.
+
 Web UI and API for building filtered M3U/XMLTV outputs from Xtream-compatible IPTV services.
 
 ## Overview
