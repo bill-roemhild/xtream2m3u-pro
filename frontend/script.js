@@ -101,6 +101,7 @@ const elements = {
     addUserBtn: document.getElementById('addUserBtn'),
     backupRestoreBtn: document.getElementById('backupRestoreBtn'),
     logoutBtn: document.getElementById('logoutBtn'),
+    appVersionBadge: document.getElementById('appVersionBadge'),
     authUserBadge: document.getElementById('authUserBadge'),
     addUserModal: document.getElementById('addUserModal'),
     authUsersList: document.getElementById('authUsersList'),
@@ -252,6 +253,25 @@ async function getAuthStatus() {
         throw new Error(data.details || data.error || 'Failed to check auth status');
     }
     return data;
+}
+
+async function loadAppVersionBadge() {
+    if (!elements.appVersionBadge) return;
+    try {
+        const response = await fetch('/version');
+        const data = await response.json();
+        if (!response.ok) {
+            return;
+        }
+        const version = String(data?.version || '').trim();
+        if (!version) {
+            return;
+        }
+        elements.appVersionBadge.textContent = `v${version}`;
+        elements.appVersionBadge.style.display = 'inline-flex';
+    } catch (_error) {
+        // Ignore version badge failures.
+    }
 }
 
 async function submitAuthSetup() {
@@ -2263,6 +2283,8 @@ function startOver() {
 
 // Event Listeners
 document.addEventListener('DOMContentLoaded', async () => {
+    await loadAppVersionBadge();
+
     const setupUsernameEl = document.getElementById('setupUsername');
     const setupPasswordEl = document.getElementById('setupPassword');
     const loginUsernameEl = document.getElementById('loginUsername');

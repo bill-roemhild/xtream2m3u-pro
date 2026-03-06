@@ -11,6 +11,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _load_app_version():
+    """Resolve app version from env or VERSION file."""
+    env_version = str(os.environ.get("APP_VERSION", "")).strip()
+    if env_version:
+        return env_version
+
+    version_file = Path(os.environ.get("APP_VERSION_FILE", "/app/VERSION"))
+    try:
+        if version_file.exists():
+            value = version_file.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+    except Exception as error:
+        logger.warning("Failed reading app version file %s: %s", version_file, error)
+
+    return "0.0.0-dev"
+
+
 def _load_or_create_secret_key():
     """Return stable Flask secret key across workers/restarts."""
     env_secret = os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY")
@@ -38,6 +56,7 @@ def create_app():
                 static_folder='../frontend',
                 template_folder='../frontend')
     app.config['SECRET_KEY'] = _load_or_create_secret_key()
+    app.config['APP_VERSION'] = _load_app_version()
 
     # Get default proxy URL from environment variable
     app.config['DEFAULT_PROXY_URL'] = os.environ.get("PROXY_URL")

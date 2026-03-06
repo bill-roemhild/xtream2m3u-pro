@@ -1,6 +1,9 @@
 # Use an official Python runtime as the base image
 FROM python:3.12-slim
 
+# Build-time version injected by CI (fallback for local builds)
+ARG APP_VERSION=0.0.0-dev
+
 # Set the working directory in the container
 WORKDIR /app
 
@@ -15,6 +18,7 @@ EXPOSE 5001
 
 # Define environment variable
 ENV FLASK_APP=run.py
+ENV APP_VERSION=${APP_VERSION}
 
 # Run the application using Gunicorn with very long timeout for large IPTV providers
 CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--timeout", "600", "--workers", "3", "--keep-alive", "10", "run:app"]

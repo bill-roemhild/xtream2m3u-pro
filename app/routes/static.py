@@ -2,7 +2,7 @@
 import logging
 import os
 
-from flask import Blueprint, send_from_directory
+from flask import Blueprint, current_app, jsonify, send_from_directory
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,12 @@ def serve_assets(filename):
         return "Asset not found", 404
 
 
+@static_bp.route("/version", methods=["GET"])
+def app_version():
+    """Return app version for UI display."""
+    return jsonify({"version": str(current_app.config.get("APP_VERSION", "0.0.0-dev"))})
+
+
 @static_bp.route("/<path:filename>")
 def serve_static_files(filename):
     """Serve static files from the frontend directory"""
@@ -39,6 +45,7 @@ def serve_static_files(filename):
         "categories",
         "subscription",
         "stream-link",
+        "version",
         "auth",
         "profiles",
         "saved-playlists",

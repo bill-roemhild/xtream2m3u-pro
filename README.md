@@ -110,6 +110,13 @@ Optional:
 
 - `PROXY_URL` (legacy/default proxy base value; current playlist generation is configured for direct stream URLs)
 
+Versioning:
+
+- `APP_VERSION` (optional override for displayed/runtime version)
+- `APP_VERSION_FILE` (default: `/app/VERSION`)
+- `GET /version` returns the current app version for UI display.
+- GitHub Actions Docker builds inject `APP_VERSION` from workflow metadata (tag/sha based).
+
 ## API Summary
 
 Authentication:
