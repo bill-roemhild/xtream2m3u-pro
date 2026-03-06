@@ -102,6 +102,49 @@ def test_user_sees_only_owned_profiles_and_playlists(admin_ctx):
     assert [item["name"] for item in playlists.json["items"]] == ["alice-list"]
 
 
+def test_admin_saved_playlists_filter_by_selected_owner(admin_ctx):
+    client = admin_ctx["client"]
+
+    create_user = client.post(
+        "/auth/users",
+        json={"username": "james", "password": "password123", "is_admin": False},
+    )
+    assert create_user.status_code == 200
+
+    # Same upstream credentials, different owners.
+    admin_playlist = client.post(
+        "/saved-playlists",
+        json={
+            "name": "admin-list",
+            "url": "http://provider",
+            "username": "shared-user",
+            "password": "shared-pass",
+            "owner": "admin",
+        },
+    )
+    assert admin_playlist.status_code == 200
+
+    james_playlist = client.post(
+        "/saved-playlists",
+        json={
+            "name": "james-list",
+            "url": "http://provider",
+            "username": "shared-user",
+            "password": "shared-pass",
+            "owner": "james",
+        },
+    )
+    assert james_playlist.status_code == 200
+
+    admin_view = client.get("/saved-playlists?url=http://provider&username=shared-user&owner=admin")
+    assert admin_view.status_code == 200
+    assert [item["name"] for item in admin_view.json["items"]] == ["admin-list"]
+
+    james_view = client.get("/saved-playlists?url=http://provider&username=shared-user&owner=james")
+    assert james_view.status_code == 200
+    assert [item["name"] for item in james_view.json["items"]] == ["james-list"]
+
+
 def test_backup_download_and_restore_roundtrip(admin_ctx):
     client = admin_ctx["client"]
     api = admin_ctx["api"]
