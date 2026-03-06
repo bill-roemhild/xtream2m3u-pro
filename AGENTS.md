@@ -112,18 +112,19 @@ Current recommended process:
 
 1. Merge tested changes into `development`.
 2. Promote `development` into `main`.
-3. Create GitHub release from `main` using tag `vX.Y.Z`.
+3. Trigger the `Create GitHub Release` workflow with version `X.Y.Z` (no `v` prefix).
 4. Release event triggers Docker package build/push workflow.
 
-Create release (example `0.1.1`):
+Trigger release workflow (example `0.1.1`):
 
 ```bash
-gh release create v0.1.1 \
-  --repo bill-roemhild/xtream2m3u-pro \
-  --target main \
-  --title "v0.1.1" \
-  --notes "Release v0.1.1"
+gh workflow run "Create GitHub Release" \
+  -R bill-roemhild/xtream2m3u-pro \
+  --ref main \
+  -f version=0.1.1
 ```
+
+This workflow auto-generates release notes from merged PRs/commits.
 
 Verify publish run:
 

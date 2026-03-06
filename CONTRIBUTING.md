@@ -110,6 +110,19 @@ When triggered by release tag `vX.Y.Z`, it builds/pushes image tags including:
 - `ghcr.io/<owner>/<repo>:latest`
 - `ghcr.io/<owner>/<repo>:sha-<shortsha>`
 
+### Create Release workflow
+
+File: `.github/workflows/create-release.yml`
+
+Runs on:
+- manual dispatch (`workflow_dispatch`)
+
+Behavior:
+- Requires `version` input (for example `0.1.1`).
+- Validates semantic version format.
+- Validates `VERSION` file matches input.
+- Creates/publishes `vX.Y.Z` release with auto-generated notes.
+
 ## 7. How to Change Version Number
 
 Version values must stay aligned in two files:
@@ -148,14 +161,13 @@ This repo is currently configured so the most reliable publish flow is:
 1. Merge your feature PR into `development`.
 2. Promote `development` to `main` (PR or merge commit, based on your repo policy).
 3. Ensure `main` contains the desired code and version files.
-4. Create a GitHub release tag from `main`:
+4. Trigger the `Create GitHub Release` workflow from `main` (auto-generates release notes):
 
 ```bash
-gh release create v0.1.1 \
+gh workflow run "Create GitHub Release" \
   --repo bill-roemhild/xtream2m3u-pro \
-  --target main \
-  --title "v0.1.1" \
-  --notes "Release v0.1.1"
+  --ref main \
+  -f version=0.1.1
 ```
 
 5. Confirm release exists:
