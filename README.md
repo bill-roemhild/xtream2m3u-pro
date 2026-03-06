@@ -137,48 +137,325 @@ Versioning:
 - `APP_VERSION_FILE` (default: `/app/VERSION`)
 - `GET /version` returns the current app version for UI display.
 
-## API Summary
+## API Reference (Required Inputs)
 
-Authentication:
+Base URL examples:
 
-- `GET /auth/status`
-- `POST /auth/setup`
-- `POST /auth/login`
-- `POST /auth/logout`
-- `GET /auth/users` (admin)
-- `POST /auth/users` (admin)
-- `POST /auth/users/delete` (admin)
+- `https://localhost:5000` (local Docker default)
+- `https://<server>:5000`
 
-Backup/restore (admin):
+Auth model:
 
-- `GET /backup/download`
-- `POST /backup/restore`
+- Session/cookie auth is required for most API routes.
+- Public routes (no login required): `GET /auth/status`, `POST /auth/setup`, `POST /auth/login`, `GET|POST /m3u`, `GET /xmltv`, `GET /playlist/<id>/m3u`, `GET /playlist/<id>/xmltv`, `GET /version`, `GET /stream-proxy/<...>`, `GET /image-proxy/<...>`.
+- JSON code blocks below show canonical request/response shapes for integration.
 
-Profiles:
+### Auth and User Management
 
-- `GET /profiles`
-- `POST /profiles`
-- `POST /profiles/delete`
+`GET /auth/status` (public)
 
-Playlist presets:
+```json
+{
+  "needs_setup": false,
+  "authenticated": true,
+  "username": "admin",
+  "is_admin": true,
+  "user_count": 2
+}
+```
 
-- `GET /saved-playlists`
-- `POST /saved-playlists`
-- `GET /saved-playlists/<id>`
-- `POST /saved-playlists/delete`
+`POST /auth/setup` (public, first-run only)
 
-Generated outputs:
+```json
+{
+  "username": "admin",
+  "password": "password123"
+}
+```
 
-- `GET|POST /m3u`
-- `GET /xmltv`
-- `GET /playlist/<id>/m3u`
-- `GET /playlist/<id>/xmltv`
+`POST /auth/login` (public)
 
-Service data:
+```json
+{
+  "username": "admin",
+  "password": "password123"
+}
+```
 
-- `GET /categories`
-- `GET /subscription`
-- `GET /stream-link` (used by channel viewer playback)
+`POST /auth/logout` (login required, no request body)
+
+`GET /auth/users` (admin)
+
+```json
+{
+  "users": [
+    {
+      "username": "admin",
+      "is_admin": true,
+      "created_at": 1772774362
+    }
+  ]
+}
+```
+
+`POST /auth/users` (admin)
+
+```json
+{
+  "username": "james",
+  "password": "password123",
+  "is_admin": false
+}
+```
+
+`POST /auth/users/delete` (admin)
+
+```json
+{
+  "username": "james"
+}
+```
+
+### Backup and Restore
+
+`GET /backup/download` (admin)
+
+```json
+{
+  "version": 1,
+  "generated_at": 1772774362,
+  "auth_users": [],
+  "profiles": [],
+  "saved_playlists": []
+}
+```
+
+`POST /backup/restore` (admin, multipart form-data)
+
+- required form field: `file` (backup JSON)
+
+```json
+{
+  "ok": true,
+  "restored": {
+    "users": 2,
+    "profiles": 4,
+    "saved_playlists": 8
+  },
+  "relogin_required": false
+}
+```
+
+### Service Profiles
+
+`GET /profiles` (login required)
+
+```json
+{
+  "profiles": [
+    {
+      "name": "demo_service",
+      "url": "http://provider:826",
+      "username": "demo_user",
+      "password": "secret",
+      "include_vod": false,
+      "owner": "admin"
+    }
+  ],
+  "store_path": "/data/credential_profiles.json"
+}
+```
+
+`POST /profiles` (login required)
+
+```json
+{
+  "name": "demo_service",
+  "url": "http://provider:826",
+  "username": "demo_user",
+  "password": "secret",
+  "include_vod": false,
+  "owner": "admin"
+}
+```
+
+`POST /profiles/delete` (login required)
+
+```json
+{
+  "name": "demo_service",
+  "owner": "admin"
+}
+```
+
+### Saved Playlist Presets
+
+`GET /saved-playlists` (login required)
+
+- optional query: `url`, `username`, `owner` (owner filter works for admin)
+
+```json
+{
+  "items": [
+    {
+      "id": "60483f9fa4ff",
+      "name": "News Only",
+      "owner": "admin",
+      "created_at": 1772774362,
+      "url": "https://host/playlist/60483f9fa4ff/m3u",
+      "m3u_url": "https://host/playlist/60483f9fa4ff/m3u",
+      "xmltv_url": "https://host/playlist/60483f9fa4ff/xmltv"
+    }
+  ],
+  "store_path": "/data/saved_playlists.json"
+}
+```
+
+`POST /saved-playlists` (login required)
+
+```json
+{
+  "id": "60483f9fa4ff",
+  "name": "News Only",
+  "url": "http://provider:826",
+  "username": "demo_user",
+  "password": "secret",
+  "owner": "admin",
+  "wanted_groups": "News,Sports",
+  "unwanted_groups": "",
+  "wanted_stream_ids": "10,12",
+  "unwanted_stream_ids": "",
+  "include_vod": false,
+  "include_channel_id": false,
+  "channel_id_tag": "channel-id"
+}
+```
+
+`GET /saved-playlists/<id>` (login required, owner-scoped for non-admin)
+
+```json
+{
+  "id": "60483f9fa4ff",
+  "name": "News Only",
+  "created_at": 1772774362,
+  "owner": "admin",
+  "config": {
+    "url": "http://provider:826",
+    "username": "demo_user",
+    "password": "secret"
+  }
+}
+```
+
+`POST /saved-playlists/delete` (login required)
+
+```json
+{
+  "id": "60483f9fa4ff"
+}
+```
+
+### Generated Output Endpoints
+
+`GET|POST /m3u` (public)
+
+- required inputs: `url`, `username`, `password`
+- optional inputs: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`, `include_vod`, `include_channel_id`, `channel_id_tag`
+
+POST JSON example:
+
+```json
+{
+  "url": "http://provider:826",
+  "username": "demo_user",
+  "password": "secret",
+  "wanted_groups": "News,Sports",
+  "wanted_stream_ids": "10,12",
+  "include_vod": false
+}
+```
+
+`GET /xmltv` (public)
+
+- required query: `url`, `username`, `password`
+- optional query: `wanted_groups`, `unwanted_groups`, `wanted_stream_ids`, `unwanted_stream_ids`
+
+`GET /playlist/<id>/m3u` (public)
+
+- optional query: `preview=true|1|yes|on`
+
+`GET /playlist/<id>/xmltv` (public)
+
+- optional query: `preview=true|1|yes|on`
+
+### Service Data and Viewer Support
+
+`GET /subscription` (login required)
+
+- required query: `url`, `username`, `password`
+
+```json
+{
+  "status": "Active",
+  "profile": {
+    "username": "demo_user",
+    "max_connections": 5
+  },
+  "server": {
+    "url": "provider.host",
+    "port": 826
+  }
+}
+```
+
+`GET /categories` (login required)
+
+- required query: `url`, `username`, `password`
+- optional query: `include_vod=true|false`
+
+```json
+{
+  "categories": [],
+  "streams": []
+}
+```
+
+`GET /stream-link` (login required)
+
+- required query: `url`, `username`, `password`, `stream_id`
+- optional query: `content_type`, `extension`, `timeshift_start`, `timeshift_duration`
+
+```json
+{
+  "url": "https://host/stream-proxy/http%3A%2F%2Fprovider%2Flive%2Fu%2Fp%2F72.ts",
+  "candidates": [
+    "https://host/stream-proxy/http%3A%2F%2Fprovider%2Flive%2Fu%2Fp%2F72.ts"
+  ],
+  "content_type": "live",
+  "stream_id": "72",
+  "extension": "ts",
+  "timeshift": {
+    "start": null,
+    "duration": null
+  }
+}
+```
+
+`GET /stream-proxy/<encoded-upstream-url>` (public)
+
+- required path: URL-encoded upstream media URL
+
+`GET /image-proxy/<encoded-image-url>` (public)
+
+- required path: URL-encoded image URL
+
+`GET /version` (public)
+
+```json
+{
+  "version": "0.2.5"
+}
+```
 
 ## Backup / Restore Behavior
 
