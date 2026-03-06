@@ -65,6 +65,37 @@ def test_stream_proxy_rewrites_hls_manifest_urls(app_ctx, monkeypatch):
     assert "provider%2Flive%2Fu%2Fp%2Fkey.key" in body
 
 
+def test_stream_proxy_falls_back_on_https_port_80(app_ctx, monkeypatch):
+    import app.routes.proxy as proxy_module
+
+    calls = []
+
+    class _Resp:
+        def __init__(self):
+            self.headers = {"Content-Type": "video/MP2T"}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size=8192):
+            yield b"TS"
+
+    def _request(url, timeout=60):
+        calls.append(url)
+        if url.startswith("https://provider:80/"):
+            raise proxy_module.requests.SSLError("wrong version number")
+        return _Resp()
+
+    monkeypatch.setattr(proxy_module, "stream_request", _request)
+    response = app_ctx["client"].get("/stream-proxy/https%3A%2F%2Fprovider%3A80%2Flive%2Fu%2Fp%2F1.ts")
+
+    assert response.status_code == 200
+    assert calls == [
+        "https://provider:80/live/u/p/1.ts",
+        "http://provider:80/live/u/p/1.ts",
+    ]
+
+
 def test_protected_route_requires_setup_then_login(app_ctx):
     client = app_ctx["client"]
 
