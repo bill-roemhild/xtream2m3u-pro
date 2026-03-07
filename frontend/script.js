@@ -31,6 +31,7 @@ let state = {
     playlistModalMode: 'create',
     editingPlaylistId: null,
     editingPlaylistOwner: '',
+    step2ActiveTab: 'subscription',
     authenticated: false,
     currentUsername: '',
     isAdmin: false,
@@ -84,6 +85,10 @@ const elements = {
     subscriptionDetails: document.getElementById('subscriptionDetails'),
     profileSelect: document.getElementById('credentialProfileSelect'),
     savedPlaylistsList: document.getElementById('savedPlaylistsList'),
+    step2TabBtnSubscription: document.getElementById('step2TabBtnSubscription'),
+    step2TabBtnCustomize: document.getElementById('step2TabBtnCustomize'),
+    step2TabPanelSubscription: document.getElementById('step2TabPanelSubscription'),
+    step2TabPanelCustomize: document.getElementById('step2TabPanelCustomize'),
     modalPlaylistName: document.getElementById('modalPlaylistName'),
     modalSavedLinks: document.getElementById('modalSavedLinks'),
     modalSavedM3uUrl: document.getElementById('modalSavedM3uUrl'),
@@ -800,6 +805,32 @@ function goBackToStep1() {
     showStep(1);
 }
 
+function setStep2Tab(tabKey) {
+    const normalized = tabKey === 'customize' ? 'customize' : 'subscription';
+    state.step2ActiveTab = normalized;
+
+    const isSubscription = normalized === 'subscription';
+    const subBtn = elements.step2TabBtnSubscription;
+    const customBtn = elements.step2TabBtnCustomize;
+    const subPanel = elements.step2TabPanelSubscription;
+    const customPanel = elements.step2TabPanelCustomize;
+
+    if (subBtn) {
+        subBtn.classList.toggle('active', isSubscription);
+        subBtn.setAttribute('aria-selected', isSubscription ? 'true' : 'false');
+    }
+    if (customBtn) {
+        customBtn.classList.toggle('active', !isSubscription);
+        customBtn.setAttribute('aria-selected', !isSubscription ? 'true' : 'false');
+    }
+    if (subPanel) {
+        subPanel.classList.toggle('active', isSubscription);
+    }
+    if (customPanel) {
+        customPanel.classList.toggle('active', !isSubscription);
+    }
+}
+
 function showLoading(message = 'Loading...') {
     // Hide all steps
     Object.values(elements.steps).forEach(step => step.classList.remove('active'));
@@ -1005,6 +1036,7 @@ async function loadCategories() {
         elements.searchInput.value = '';
         renderCategories();
         renderSubscriptionDetails();
+        setStep2Tab('subscription');
         showStep(2);
 
     } catch (error) {

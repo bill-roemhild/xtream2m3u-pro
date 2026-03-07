@@ -70,23 +70,30 @@
         <!-- Step 2: Category Selection -->
         <section class="step" id="step2">
             <div class="card">
-                <div class="subscription-details" id="subscriptionDetails"></div>
-                <div class="card-header">
-                    <span>📁 Customize Playlist</span>
-                </div>
-                <div class="card-body">
-                    <div id="savedPlaylistsListContainer" style="margin-bottom: 1rem; text-align: left;">
-                        <label>Saved Playlists For Selected Service</label>
-                        <div id="savedPlaylistsList" class="saved-playlists-list"></div>
+                <div class="step2-tabs">
+                    <div class="step2-tab-nav" role="tablist" aria-label="Step 2 Tabs">
+                        <button class="step2-tab-btn active" type="button" id="step2TabBtnSubscription" role="tab" aria-selected="true" aria-controls="step2TabPanelSubscription" onclick="setStep2Tab('subscription')">Subscription Details</button>
+                        <button class="step2-tab-btn" type="button" id="step2TabBtnCustomize" role="tab" aria-selected="false" aria-controls="step2TabPanelCustomize" onclick="setStep2Tab('customize')">Customize Playlist</button>
                     </div>
 
-                    <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap;">
-                        <button class="btn btn-secondary" onclick="goBackToStep1()">
-                            Back
-                        </button>
-                        <button class="btn btn-success" onclick="openPlaylistBuilderModal()">
-                            Create Playlist
-                        </button>
+                    <div class="step2-tab-panel active" id="step2TabPanelSubscription" role="tabpanel" aria-labelledby="step2TabBtnSubscription">
+                        <div class="subscription-details" id="subscriptionDetails"></div>
+                    </div>
+
+                    <div class="step2-tab-panel" id="step2TabPanelCustomize" role="tabpanel" aria-labelledby="step2TabBtnCustomize">
+                        <div id="savedPlaylistsListContainer" class="saved-playlists-panel" style="margin-bottom: 1rem; text-align: left;">
+                            <label>Saved Playlists For Selected Service</label>
+                            <div id="savedPlaylistsList" class="saved-playlists-list"></div>
+                        </div>
+
+                        <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap;">
+                            <button class="btn btn-secondary" onclick="goBackToStep1()">
+                                Back
+                            </button>
+                            <button class="btn btn-success" onclick="openPlaylistBuilderModal()">
+                                Create Playlist
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
