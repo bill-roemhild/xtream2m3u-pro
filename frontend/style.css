@@ -767,13 +767,6 @@ input::placeholder {
     gap: 0.5rem;
 }
 
-.saved-playlists-panel {
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    background: var(--bg-secondary);
-    padding: 1rem;
-}
-
 .saved-playlist-item {
     display: flex;
     align-items: center;
