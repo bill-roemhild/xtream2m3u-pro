@@ -767,6 +767,13 @@ input::placeholder {
     gap: 0.5rem;
 }
 
+.saved-playlists-panel {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.3);
+    padding: 0.9rem;
+}
+
 .saved-playlist-item {
     display: flex;
     align-items: center;
@@ -798,6 +805,8 @@ input::placeholder {
     border: 1px solid var(--border-color);
     border-radius: 12px;
     padding: 1rem;
+    margin-top: -10px;
+    margin-bottom: 0 !important;
 }
 
 .subscription-card h3 {
