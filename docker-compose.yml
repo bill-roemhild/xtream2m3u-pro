@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      no_cache: true
     image: ghcr.io/bill-roemhild/xtream2m3u-pro:latest
     container_name: xtream2m3u-pro
     ports:
