@@ -45,11 +45,43 @@ def fetch_api_data(url, timeout=10):
             # Fallback to text for non-JSON responses
             return response.text
 
-    except requests.exceptions.SSLError:
-        return {"error": "SSL Error", "details": "Failed to verify SSL certificate"}, 503
-    except requests.exceptions.RequestException as e:
-        logger.error(f"RequestException: {e}")
-        return {"error": "Request Exception", "details": str(e)}, 503
+    except requests.exceptions.SSLError as error:
+        logger.warning("Xtream API SSL error host=%s error=%s", hostname, error)
+        return {
+            "error": "Connection Failed",
+            "details": "Could not establish a secure connection to the service. Verify URL/protocol and try again.",
+        }, 503
+    except requests.exceptions.ConnectTimeout as error:
+        logger.warning("Xtream API connect timeout host=%s error=%s", hostname, error)
+        return {
+            "error": "Connection Timed Out",
+            "details": "Could not reach the service in time. Verify the server is online and accessible.",
+        }, 504
+    except requests.exceptions.ReadTimeout as error:
+        logger.warning("Xtream API read timeout host=%s error=%s", hostname, error)
+        return {
+            "error": "Service Timed Out",
+            "details": "The service took too long to respond. Please try again.",
+        }, 504
+    except requests.exceptions.ConnectionError as error:
+        logger.warning("Xtream API connection error host=%s error=%s", hostname, error)
+        return {
+            "error": "Connection Failed",
+            "details": "Unable to connect to the service. Check server URL, port, and network access.",
+        }, 503
+    except requests.exceptions.HTTPError as error:
+        status_code = getattr(error.response, "status_code", None)
+        logger.warning("Xtream API HTTP error host=%s status=%s error=%s", hostname, status_code, error)
+        return {
+            "error": "Service Error",
+            "details": f"Service returned HTTP {status_code or 'error'}. Verify credentials and service status.",
+        }, 503
+    except requests.exceptions.RequestException as error:
+        logger.warning("Xtream API request exception host=%s error=%s", hostname, error)
+        return {
+            "error": "Request Failed",
+            "details": "Could not complete request to the service. Please verify settings and try again.",
+        }, 503
 
 
 def _to_int(value, default=0):
@@ -249,7 +281,17 @@ def build_stream_link_candidates(
     if protocol not in {"http", "https"}:
         protocol = "http"
     host = server_info.get("url")
-    port = server_info.get("port")
+    port = _to_int(server_info.get("port"), 0)
+    https_port = _to_int(server_info.get("https_port"), 0)
+    if port <= 0:
+        port = 443 if protocol == "https" else 80
+
+    # Normalize inconsistent provider metadata.
+    # Some upstreams report https on port 80 (or http on 443), which is invalid for direct playback.
+    if protocol == "https" and port == 80:
+        protocol = "http"
+    elif protocol == "http" and port == 443 and https_port != 443:
+        protocol = "https"
 
     path = _build_stream_path(username, password, content_type, stream_id, extension=extension, timeshift=timeshift)
     candidates = []

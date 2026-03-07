@@ -1,8 +1,15 @@
 """API routes for Xtream Codes proxy (categories, M3U, XMLTV)"""
+import atexit
+import base64
+import copy
+import concurrent.futures
 import json
 import logging
 import os
+import signal
+import threading
 import time
+import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -16,6 +23,7 @@ from app.services import (
     build_stream_link,
     fetch_api_data,
     fetch_categories_and_channels,
+    fetch_short_epg,
     generate_m3u_playlist,
     normalize_server_info,
     normalize_user_info,
@@ -30,11 +38,90 @@ PROFILE_STORE_PATH = Path(os.environ.get("CREDENTIAL_PROFILE_STORE", "/data/cred
 PLAYLIST_STORE_PATH = Path(os.environ.get("PLAYLIST_STORE_PATH", "/data/saved_playlists.json"))
 AUTH_STORE_PATH = Path(os.environ.get("AUTH_STORE_PATH", "/data/auth_users.json"))
 AUTH_THROTTLE_STORE_PATH = Path(os.environ.get("AUTH_THROTTLE_STORE_PATH", "/data/auth_login_throttle.json"))
+SERVICE_CATALOG_CACHE_PATH = Path(os.environ.get("SERVICE_CATALOG_CACHE_PATH", "/data/service_catalog_cache.json"))
+SERVICE_CATALOG_CACHE_TTL_SECONDS = max(0, int(os.environ.get("SERVICE_CATALOG_CACHE_TTL_SECONDS", "7200")))
+SERVICE_EPG_CACHE_PATH = Path(os.environ.get("SERVICE_EPG_CACHE_PATH", "/data/service_epg_cache.json"))
+SERVICE_EPG_CACHE_TTL_SECONDS = max(0, int(os.environ.get("SERVICE_EPG_CACHE_TTL_SECONDS", "10800")))
+EPG_BATCH_MAX_STREAMS = max(1, int(os.environ.get("EPG_BATCH_MAX_STREAMS", "500")))
+EPG_BATCH_MAX_WORKERS = max(1, int(os.environ.get("EPG_BATCH_MAX_WORKERS", "12")))
 AUTH_MAX_LOGIN_ATTEMPTS = max(1, int(os.environ.get("AUTH_MAX_LOGIN_ATTEMPTS", "5")))
 AUTH_LOCKOUT_SECONDS = max(10, int(os.environ.get("AUTH_LOCKOUT_SECONDS", "300")))
 AUTH_ATTEMPT_WINDOW_SECONDS = max(10, int(os.environ.get("AUTH_ATTEMPT_WINDOW_SECONDS", "300")))
 CREDENTIAL_CIPHER_FILE = Path(os.environ.get("CREDENTIAL_CIPHER_FILE", "/data/credential_cipher_key"))
 CREDENTIAL_CIPHER_PREFIX = "enc::v1::"
+_STORE_WRITE_LOCK = threading.Lock()
+_SERVICE_EPG_CACHE_LOCK = threading.RLock()
+_SERVICE_EPG_CACHE_MEM = None
+_SERVICE_EPG_CACHE_MEM_DIRTY = False
+_SHUTDOWN_HOOKS_REGISTERED = False
+
+
+def _atomic_write_text(path, content):
+    """Atomically write text to disk and fsync file + directory."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_name = f".{target.name}.{uuid.uuid4().hex}.tmp"
+    temp_path = target.parent / temp_name
+    with _STORE_WRITE_LOCK:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, target)
+        dir_fd = os.open(str(target.parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+
+def _sync_existing_file(path):
+    file_path = Path(path)
+    if not file_path.exists():
+        return
+    try:
+        with file_path.open("rb") as handle:
+            os.fsync(handle.fileno())
+    except Exception as error:
+        logger.warning("Failed fsync for %s: %s", file_path, error)
+
+
+def flush_json_store_files():
+    """Force sync all persisted JSON stores to disk."""
+    flush_service_epg_cache()
+    for path in (
+        AUTH_STORE_PATH,
+        AUTH_THROTTLE_STORE_PATH,
+        PROFILE_STORE_PATH,
+        PLAYLIST_STORE_PATH,
+        SERVICE_CATALOG_CACHE_PATH,
+        SERVICE_EPG_CACHE_PATH,
+    ):
+        _sync_existing_file(path)
+
+
+def _register_shutdown_persistence_hooks():
+    global _SHUTDOWN_HOOKS_REGISTERED
+    if _SHUTDOWN_HOOKS_REGISTERED:
+        return
+    _SHUTDOWN_HOOKS_REGISTERED = True
+
+    def _handle_shutdown_signal(signum, _frame):
+        try:
+            flush_json_store_files()
+        finally:
+            raise SystemExit(0)
+
+    atexit.register(flush_json_store_files)
+    try:
+        signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+        signal.signal(signal.SIGINT, _handle_shutdown_signal)
+    except ValueError:
+        # Signal registration is only allowed in main thread.
+        logger.warning("Shutdown signal hooks not registered (non-main thread)")
+
+
+_register_shutdown_persistence_hooks()
 
 
 def _load_or_create_credential_cipher():
@@ -109,6 +196,190 @@ def _sanitize_throttle_store(raw_data):
     return {"entries": entries}
 
 
+def _normalize_service_url_key(url):
+    raw = str(url or "").strip().rstrip("/")
+    return raw.lower()
+
+
+def _catalog_cache_key(url, include_vod=False, include_all_streams=True):
+    return f"{_normalize_service_url_key(url)}|include_vod={bool(include_vod)}|all_streams={bool(include_all_streams)}"
+
+
+def _epg_cache_key(url, stream_id, limit=12):
+    return f"{_normalize_service_url_key(url)}|stream_id={str(stream_id or '').strip()}|limit={str(limit or '').strip()}"
+
+
+def _sanitize_service_catalog_cache(raw_data):
+    records = {}
+    if isinstance(raw_data, dict):
+        candidate = raw_data.get("records", {})
+        if isinstance(candidate, dict):
+            for key, value in candidate.items():
+                if not isinstance(value, dict):
+                    continue
+                categories = value.get("categories")
+                streams = value.get("streams")
+                fetched_at = int(value.get("fetched_at", 0) or 0)
+                if not isinstance(categories, list) or not isinstance(streams, list):
+                    continue
+                if fetched_at <= 0:
+                    continue
+                records[str(key)] = {
+                    "fetched_at": fetched_at,
+                    "categories": categories,
+                    "streams": streams,
+                }
+    return {"records": records}
+
+
+def load_service_catalog_cache():
+    try:
+        if SERVICE_CATALOG_CACHE_PATH.exists():
+            raw = json.loads(SERVICE_CATALOG_CACHE_PATH.read_text(encoding="utf-8"))
+            return _sanitize_service_catalog_cache(raw)
+    except Exception as error:
+        logger.warning("Failed reading service catalog cache path=%s error=%s", SERVICE_CATALOG_CACHE_PATH, error)
+    return {"records": {}}
+
+
+def save_service_catalog_cache(cache_data):
+    _atomic_write_text(SERVICE_CATALOG_CACHE_PATH, json.dumps(_sanitize_service_catalog_cache(cache_data), indent=2))
+
+
+def get_cached_categories_and_streams(url, include_vod=False, include_all_streams=True):
+    if SERVICE_CATALOG_CACHE_TTL_SECONDS <= 0:
+        return None
+    key = _catalog_cache_key(url, include_vod=include_vod, include_all_streams=include_all_streams)
+    cache_data = load_service_catalog_cache()
+    entry = cache_data.get("records", {}).get(key)
+    if not isinstance(entry, dict):
+        return None
+    fetched_at = int(entry.get("fetched_at", 0) or 0)
+    age_seconds = int(time.time()) - fetched_at
+    if age_seconds > SERVICE_CATALOG_CACHE_TTL_SECONDS:
+        return None
+    return {
+        "categories": copy.deepcopy(entry.get("categories", [])),
+        "streams": copy.deepcopy(entry.get("streams", [])),
+        "fetched_at": fetched_at,
+        "age_seconds": max(0, age_seconds),
+    }
+
+
+def set_cached_categories_and_streams(url, categories, streams, include_vod=False, include_all_streams=True):
+    key = _catalog_cache_key(url, include_vod=include_vod, include_all_streams=include_all_streams)
+    cache_data = load_service_catalog_cache()
+    records = cache_data.setdefault("records", {})
+    records[key] = {
+        "fetched_at": int(time.time()),
+        "categories": categories if isinstance(categories, list) else [],
+        "streams": streams if isinstance(streams, list) else [],
+    }
+    save_service_catalog_cache(cache_data)
+
+
+def _sanitize_service_epg_cache(raw_data):
+    records = {}
+    if isinstance(raw_data, dict):
+        candidate = raw_data.get("records", {})
+        if isinstance(candidate, dict):
+            for key, value in candidate.items():
+                if not isinstance(value, dict):
+                    continue
+                listings = value.get("listings")
+                fetched_at = int(value.get("fetched_at", 0) or 0)
+                if not isinstance(listings, list) or fetched_at <= 0:
+                    continue
+                records[str(key)] = {
+                    "fetched_at": fetched_at,
+                    "stream_id": str(value.get("stream_id", "")).strip(),
+                    "server_time": str(value.get("server_time", "")).strip(),
+                    "server_timezone": str(value.get("server_timezone", "")).strip(),
+                    "server_timestamp": int(value.get("server_timestamp", 0) or 0),
+                    "listings": listings,
+                }
+    return {"records": records}
+
+
+def _load_service_epg_cache_from_disk():
+    try:
+        if SERVICE_EPG_CACHE_PATH.exists():
+            raw = json.loads(SERVICE_EPG_CACHE_PATH.read_text(encoding="utf-8"))
+            return _sanitize_service_epg_cache(raw)
+    except Exception as error:
+        logger.warning("Failed reading service EPG cache path=%s error=%s", SERVICE_EPG_CACHE_PATH, error)
+    return {"records": {}}
+
+
+def load_service_epg_cache():
+    global _SERVICE_EPG_CACHE_MEM
+    with _SERVICE_EPG_CACHE_LOCK:
+        if _SERVICE_EPG_CACHE_MEM is None:
+            _SERVICE_EPG_CACHE_MEM = _load_service_epg_cache_from_disk()
+        return _SERVICE_EPG_CACHE_MEM
+
+
+def save_service_epg_cache(cache_data):
+    global _SERVICE_EPG_CACHE_MEM, _SERVICE_EPG_CACHE_MEM_DIRTY
+    sanitized = _sanitize_service_epg_cache(cache_data)
+    with _SERVICE_EPG_CACHE_LOCK:
+        _SERVICE_EPG_CACHE_MEM = sanitized
+        _SERVICE_EPG_CACHE_MEM_DIRTY = True
+
+
+def flush_service_epg_cache():
+    global _SERVICE_EPG_CACHE_MEM_DIRTY
+    with _SERVICE_EPG_CACHE_LOCK:
+        if not _SERVICE_EPG_CACHE_MEM_DIRTY:
+            return
+        payload = _sanitize_service_epg_cache(_SERVICE_EPG_CACHE_MEM or {"records": {}})
+        _SERVICE_EPG_CACHE_MEM_DIRTY = False
+    _atomic_write_text(SERVICE_EPG_CACHE_PATH, json.dumps(payload, indent=2))
+
+
+def get_cached_epg_short(url, stream_id, limit=12):
+    if SERVICE_EPG_CACHE_TTL_SECONDS <= 0:
+        return None
+    key = _epg_cache_key(url, stream_id=stream_id, limit=limit)
+    with _SERVICE_EPG_CACHE_LOCK:
+        cache_data = load_service_epg_cache()
+        entry = cache_data.get("records", {}).get(key)
+        if not isinstance(entry, dict):
+            return None
+        fetched_at = int(entry.get("fetched_at", 0) or 0)
+        age_seconds = int(time.time()) - fetched_at
+        if age_seconds > SERVICE_EPG_CACHE_TTL_SECONDS:
+            return None
+        base_server_timestamp = int(entry.get("server_timestamp", 0) or 0)
+        adjusted_server_timestamp = base_server_timestamp + max(0, age_seconds) if base_server_timestamp > 0 else 0
+        return {
+            "stream_id": str(entry.get("stream_id", "")).strip(),
+            "server_time": str(entry.get("server_time", "")).strip(),
+            "server_timezone": str(entry.get("server_timezone", "")).strip(),
+            # Keep server clock aligned when serving from cache by advancing timestamp by cache age.
+            "server_timestamp": adjusted_server_timestamp,
+            "listings": copy.deepcopy(entry.get("listings", [])),
+            "fetched_at": fetched_at,
+            "age_seconds": max(0, age_seconds),
+        }
+
+
+def set_cached_epg_short(url, stream_id, limit, payload):
+    key = _epg_cache_key(url, stream_id=stream_id, limit=limit)
+    with _SERVICE_EPG_CACHE_LOCK:
+        cache_data = load_service_epg_cache()
+        records = cache_data.setdefault("records", {})
+        records[key] = {
+            "fetched_at": int(time.time()),
+            "stream_id": str(payload.get("stream_id", stream_id)).strip(),
+            "server_time": str(payload.get("server_time", "")).strip(),
+            "server_timezone": str(payload.get("server_timezone", "")).strip(),
+            "server_timestamp": int(payload.get("server_timestamp", 0) or 0),
+            "listings": payload.get("listings", []) if isinstance(payload.get("listings"), list) else [],
+        }
+        save_service_epg_cache(cache_data)
+
+
 def load_throttle_store():
     try:
         if AUTH_THROTTLE_STORE_PATH.exists():
@@ -124,11 +395,7 @@ def load_throttle_store():
 
 
 def save_throttle_store(data):
-    AUTH_THROTTLE_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    AUTH_THROTTLE_STORE_PATH.write_text(
-        json.dumps(_sanitize_throttle_store(data), indent=2),
-        encoding="utf-8",
-    )
+    _atomic_write_text(AUTH_THROTTLE_STORE_PATH, json.dumps(_sanitize_throttle_store(data), indent=2))
 
 
 def _client_ip():
@@ -202,22 +469,31 @@ def _sanitize_auth_store(raw_data):
 
 
 def load_auth_store():
+    should_persist = False
     try:
         if AUTH_STORE_PATH.exists():
-            raw = json.loads(AUTH_STORE_PATH.read_text(encoding="utf-8"))
-            data = _sanitize_auth_store(raw)
+            content = AUTH_STORE_PATH.read_text(encoding="utf-8").strip()
+            if not content:
+                data = {"users": []}
+                should_persist = True
+            else:
+                raw = json.loads(content)
+                data = _sanitize_auth_store(raw)
+                should_persist = True
         else:
             data = {"users": []}
+            should_persist = True
     except Exception as error:
         logger.warning("Failed reading auth store path=%s error=%s", AUTH_STORE_PATH, error)
         data = {"users": []}
-    save_auth_store(data)
+        should_persist = False
+    if should_persist:
+        save_auth_store(data)
     return data
 
 
 def save_auth_store(data):
-    AUTH_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    AUTH_STORE_PATH.write_text(json.dumps(_sanitize_auth_store(data), indent=2), encoding="utf-8")
+    _atomic_write_text(AUTH_STORE_PATH, json.dumps(_sanitize_auth_store(data), indent=2))
 
 
 def _find_user(username, auth_store):
@@ -287,7 +563,7 @@ def require_authentication():
 
     auth_store = load_auth_store()
     has_users = len(auth_store.get("users", [])) > 0
-    if not has_users:
+    if not has_users and not _is_authenticated():
         return jsonify({"error": "Setup Required", "details": "Create the first admin account first"}), 403
     if not _is_authenticated():
         return jsonify({"error": "Unauthorized", "details": "Login required"}), 401
@@ -546,6 +822,45 @@ def parse_stream_id_list(raw_value):
     return [str(v).strip() for v in values if str(v).strip()]
 
 
+def _decode_epg_text(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        decoded = base64.b64decode(raw).decode("utf-8", errors="replace").strip()
+        return decoded or raw
+    except Exception:
+        return raw
+
+
+def _normalize_stream_icon_url(raw_icon_url, service_url):
+    icon = str(raw_icon_url or "").strip()
+    if not icon:
+        return ""
+    if icon.startswith("http://") or icon.startswith("https://"):
+        return icon
+    if icon.startswith("//"):
+        scheme = urllib.parse.urlparse(str(service_url or "").strip()).scheme or "http"
+        return f"{scheme}:{icon}"
+    try:
+        base = str(service_url or "").strip()
+        if not base:
+            return icon
+        return urllib.parse.urljoin(f"{base.rstrip('/')}/", icon.lstrip("/"))
+    except Exception:
+        return icon
+
+
+def _normalize_stream_icons_for_service(streams, service_url):
+    if not isinstance(streams, list):
+        return streams
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+        stream["stream_icon"] = _normalize_stream_icon_url(stream.get("stream_icon"), service_url)
+    return streams
+
+
 def build_subscription_details(user_data):
     """Build a safe, normalized subscription payload for UI consumption."""
     user_info = normalize_user_info(user_data.get("user_info", {}))
@@ -599,14 +914,13 @@ def sanitize_profiles(raw_profiles):
 
 def save_profiles(profiles):
     """Persist profiles to container-backed file."""
-    PROFILE_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = sanitize_profiles(profiles)
     payload_for_storage = []
     for profile in payload:
         item = dict(profile)
         item["password"] = _encrypt_secret(item.get("password", ""))
         payload_for_storage.append(item)
-    PROFILE_STORE_PATH.write_text(json.dumps(payload_for_storage, indent=2), encoding="utf-8")
+    _atomic_write_text(PROFILE_STORE_PATH, json.dumps(payload_for_storage, indent=2))
 
 
 def load_profiles():
@@ -672,7 +986,6 @@ def sanitize_saved_playlists(raw_items):
 
 def save_saved_playlists(items):
     """Persist saved playlist presets."""
-    PLAYLIST_STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
     cleaned = sanitize_saved_playlists(items)
     payload_for_storage = []
     for item in cleaned:
@@ -681,10 +994,7 @@ def save_saved_playlists(items):
         config["password"] = _encrypt_secret(config.get("password", ""))
         next_item["config"] = config
         payload_for_storage.append(next_item)
-    PLAYLIST_STORE_PATH.write_text(
-        json.dumps(payload_for_storage, indent=2),
-        encoding="utf-8",
-    )
+    _atomic_write_text(PLAYLIST_STORE_PATH, json.dumps(payload_for_storage, indent=2))
 
 
 def load_saved_playlists():
@@ -1252,6 +1562,21 @@ def get_categories():
     if error_json:
         return error_json, error_code, {"Content-Type": "application/json"}
 
+    cached_payload = get_cached_categories_and_streams(
+        url,
+        include_vod=include_vod,
+        include_all_streams=True,
+    )
+    if cached_payload:
+        cached_streams = _normalize_stream_icons_for_service(cached_payload["streams"], url)
+        logger.info(
+            "Serving categories from shared service cache url=%s include_vod=%s age=%ss",
+            _normalize_service_url_key(url),
+            include_vod,
+            cached_payload["age_seconds"],
+        )
+        return jsonify({"categories": cached_payload["categories"], "streams": cached_streams})
+
     # Fetch categories
     categories, channels, error_json, error_code = fetch_categories_and_channels(
         url,
@@ -1262,6 +1587,15 @@ def get_categories():
     )
     if error_json:
         return error_json, error_code, {"Content-Type": "application/json"}
+
+    channels = _normalize_stream_icons_for_service(channels, url)
+    set_cached_categories_and_streams(
+        url,
+        categories,
+        channels,
+        include_vod=include_vod,
+        include_all_streams=True,
+    )
 
     # Return categories plus stream metadata for channel-level filtering UI.
     return jsonify({"categories": categories, "streams": channels})
@@ -1296,6 +1630,7 @@ def get_stream_link():
         extension=extension,
         timeshift={"start": timeshift_start, "duration": timeshift_duration},
     )
+
     upstream_link = candidates[0] if candidates else build_stream_link(
         server_info=user_data.get("server_info"),
         username=username,
@@ -1324,6 +1659,171 @@ def get_stream_link():
             },
         }
     )
+
+
+@api_bp.route("/epg-short", methods=["GET"])
+def get_short_epg_for_stream():
+    """Fetch short EPG rows for a stream."""
+    url, username, password, _proxy_url, error, status_code = get_required_params()
+    if error:
+        return error, status_code
+
+    stream_id = str(request.args.get("stream_id", "")).strip()
+    limit = request.args.get("limit", "12")
+    if not stream_id:
+        return jsonify({"error": "Missing Parameters", "details": "Required: stream_id"}), 400
+
+    user_data, error_json, error_code = validate_xtream_credentials(url, username, password)
+    if error_json:
+        return error_json, error_code, {"Content-Type": "application/json"}
+
+    payload, fetch_error, fetch_status = _build_short_epg_payload(
+        url=url,
+        username=username,
+        password=password,
+        stream_id=stream_id,
+        limit=limit,
+        user_data=user_data,
+    )
+    if fetch_error:
+        return jsonify(fetch_error), fetch_status
+    return jsonify(payload)
+
+
+def _build_short_epg_payload(url, username, password, stream_id, limit, user_data=None):
+    stream_id = str(stream_id or "").strip()
+    if not stream_id:
+        return None, {"error": "Missing Parameters", "details": "Required: stream_id"}, 400
+
+    cached_payload = get_cached_epg_short(url, stream_id=stream_id, limit=limit)
+    if cached_payload:
+        logger.info(
+            "epg-short cache HIT url=%s stream_id=%s limit=%s age=%ss",
+            _normalize_service_url_key(url),
+            stream_id,
+            limit,
+            cached_payload["age_seconds"],
+        )
+        return {
+            "stream_id": cached_payload["stream_id"] or stream_id,
+            "server_time": cached_payload["server_time"],
+            "server_timezone": cached_payload["server_timezone"],
+            "server_timestamp": cached_payload["server_timestamp"],
+            "listings": cached_payload["listings"],
+        }, None, None
+    logger.info(
+        "epg-short cache MISS url=%s stream_id=%s limit=%s",
+        _normalize_service_url_key(url),
+        stream_id,
+        limit,
+    )
+
+    epg_data = fetch_short_epg(url, username, password, stream_id=stream_id, limit=limit)
+    if isinstance(epg_data, tuple):
+        return None, epg_data[0], epg_data[1]
+
+    listings = []
+    raw_items = []
+    if isinstance(epg_data, dict):
+        raw_items = epg_data.get("epg_listings", []) or []
+    if isinstance(epg_data, list):
+        raw_items = epg_data
+
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        title = _decode_epg_text(item.get("title"))
+        description = _decode_epg_text(item.get("description"))
+        listings.append(
+            {
+                "title": title,
+                "description": description,
+                "start": str(item.get("start") or item.get("start_timestamp") or ""),
+                "end": str(item.get("end") or item.get("stop_timestamp") or ""),
+                "now_playing": str(item.get("now_playing") or item.get("has_archive") or ""),
+            }
+        )
+
+    server_info = normalize_server_info((user_data or {}).get("server_info", {}))
+    payload = {
+        "stream_id": stream_id,
+        "server_time": server_info.get("time_now"),
+        "server_timezone": server_info.get("timezone"),
+        "server_timestamp": server_info.get("timestamp_now"),
+        "listings": listings,
+    }
+    set_cached_epg_short(url, stream_id=stream_id, limit=limit, payload=payload)
+    logger.info(
+        "epg-short cache STORE url=%s stream_id=%s limit=%s listings=%s",
+        _normalize_service_url_key(url),
+        stream_id,
+        limit,
+        len(listings),
+    )
+    return payload, None, None
+
+
+@api_bp.route("/epg-short-batch", methods=["POST"])
+def get_short_epg_batch():
+    """Fetch short EPG rows for multiple streams in one request."""
+    url, username, password, _proxy_url, error, status_code = get_required_params()
+    if error:
+        return error, status_code
+
+    data = request.get_json() or {}
+    raw_ids = data.get("stream_ids")
+    limit = data.get("limit", "8")
+    if not isinstance(raw_ids, list):
+        return jsonify({"error": "Missing Parameters", "details": "Required: stream_ids (array)"}), 400
+
+    stream_ids = [str(item).strip() for item in raw_ids if str(item).strip()]
+    unique_stream_ids = list(dict.fromkeys(stream_ids))
+    if not unique_stream_ids:
+        return jsonify({"results": [], "count": 0})
+    if len(unique_stream_ids) > EPG_BATCH_MAX_STREAMS:
+        return jsonify({"error": "Too Many Streams", "details": f"Maximum {EPG_BATCH_MAX_STREAMS} stream_ids per request"}), 400
+
+    user_data, error_json, error_code = validate_xtream_credentials(url, username, password)
+    if error_json:
+        return error_json, error_code, {"Content-Type": "application/json"}
+
+    def _fetch_one(stream_id):
+        payload, payload_error, payload_status = _build_short_epg_payload(
+            url=url,
+            username=username,
+            password=password,
+            stream_id=stream_id,
+            limit=limit,
+            user_data=user_data,
+        )
+        if payload_error:
+            return {
+                "stream_id": stream_id,
+                "error": payload_error.get("details") or payload_error.get("error") or "Failed to load EPG",
+                "status_code": int(payload_status or 500),
+                "listings": [],
+            }
+        return payload
+
+    max_workers = min(max(1, EPG_BATCH_MAX_WORKERS), len(unique_stream_ids))
+    results_by_stream = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_map = {executor.submit(_fetch_one, stream_id): stream_id for stream_id in unique_stream_ids}
+        for future in concurrent.futures.as_completed(future_map):
+            stream_id = future_map[future]
+            try:
+                results_by_stream[stream_id] = future.result()
+            except Exception as error:
+                logger.warning("epg-short-batch failed stream_id=%s error=%s", stream_id, error)
+                results_by_stream[stream_id] = {
+                    "stream_id": stream_id,
+                    "error": "Failed to load EPG",
+                    "status_code": 500,
+                    "listings": [],
+                }
+
+    ordered_results = [results_by_stream.get(stream_id, {"stream_id": stream_id, "listings": []}) for stream_id in unique_stream_ids]
+    return jsonify({"results": ordered_results, "count": len(ordered_results)})
 
 
 @api_bp.route("/xmltv", methods=["GET"])

@@ -15,13 +15,11 @@
         <!-- Header -->
         <header class="header">
             <div class="header-actions">
-                <div class="header-actions-left">
-                    <a id="appVersionBadge" class="app-version-badge" style="display:none;" href="https://github.com/bill-roemhild/xtream2m3u-pro" target="_blank" rel="noopener noreferrer"></a>
-                    <span id="authUserBadge" class="auth-user-badge" style="display:none;"></span>
-                </div>
+                <div class="header-actions-left"></div>
                 <div class="header-actions-right">
                     <button type="button" class="btn btn-secondary btn-compact" id="backupRestoreBtn" style="display: inline-flex;height: 36px;" onclick="openBackupModal()">Backup / Restore</button>
                     <button type="button" class="btn btn-secondary btn-compact" id="addUserBtn" style="display: inline-flex;height: 36px;" onclick="openAddUserModal()">User Maintenance</button>
+                    <button type="button" class="btn btn-secondary btn-compact" id="serviceSelectBtn" style="display: inline-flex;height: 36px;" onclick="goBackToStep1()">Service Select</button>
                     <button type="button" class="btn btn-secondary btn-compact" id="logoutBtn" style="display: inline-flex;height: 36px;" onclick="submitLogout()">Logout</button>
                 </div>
             </div>
@@ -31,7 +29,7 @@
         <section class="step active" id="step1">
             <div class="card">
                 <div class="card-header">
-                    <span>🔐 Service Credentials</span>
+                    <span>🔐 Services</span>
                 </div>
                 <div class="card-body">
                     <form id="credentialsForm" autocomplete="off" onsubmit="event.preventDefault(); loadCategories();">
@@ -70,23 +68,58 @@
         <!-- Step 2: Category Selection -->
         <section class="step" id="step2">
             <div class="card">
-                <div class="subscription-details" id="subscriptionDetails"></div>
-                <div class="card-header">
-                    <span>📁 Customize Playlist</span>
-                </div>
-                <div class="card-body">
-                    <div id="savedPlaylistsListContainer" style="margin-bottom: 1rem; text-align: left;">
-                        <label>Saved Playlists For Selected Service</label>
-                        <div id="savedPlaylistsList" class="saved-playlists-list"></div>
+                <div class="step2-tabs">
+                    <div class="step2-tab-nav" role="tablist" aria-label="Step 2 Tabs">
+                        <button class="step2-tab-btn active" type="button" id="step2TabBtnSubscription" role="tab" aria-selected="true" aria-controls="step2TabPanelSubscription" onclick="setStep2Tab('subscription')">Subscription Details</button>
+                        <button class="step2-tab-btn" type="button" id="step2TabBtnCustomize" role="tab" aria-selected="false" aria-controls="step2TabPanelCustomize" onclick="setStep2Tab('customize')">Customize Playlist</button>
+                        <button class="step2-tab-btn" type="button" id="step2TabBtnLiveTv" role="tab" aria-selected="false" aria-controls="step2TabPanelLiveTv" onclick="setStep2Tab('live-tv')">Channel Guide</button>
+                        <button class="step2-tab-btn" type="button" id="step2TabBtnCustomGroups" role="tab" aria-selected="false" aria-controls="step2TabPanelCustomGroups" onclick="setStep2Tab('custom-groups')">Custom Channel Groups</button>
                     </div>
 
-                    <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap;">
-                        <button class="btn btn-secondary" onclick="goBackToStep1()">
-                            Back
-                        </button>
-                        <button class="btn btn-success" onclick="openPlaylistBuilderModal()">
-                            Create Playlist
-                        </button>
+                    <div class="step2-tab-panel active" id="step2TabPanelSubscription" role="tabpanel" aria-labelledby="step2TabBtnSubscription" style="margin-bottom: 20px;">
+                        <div class="subscription-details" id="subscriptionDetails"></div>
+                    </div>
+
+                    <div class="step2-tab-panel subscription-details" id="step2TabPanelCustomize" role="tabpanel" aria-labelledby="step2TabBtnCustomize">
+                        <div id="savedPlaylistsListContainer" class="subscription-card">
+                            <h3>Saved Playlists For Selected Service</h3>
+                            <div id="savedPlaylistsList" class="saved-playlists-list"></div>
+                        </div>
+
+                        <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 2rem; flex-wrap: wrap; margin-bottom: 15px;">
+                            <button class="btn btn-success" onclick="openPlaylistBuilderModal()">
+                                Create Playlist
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="step2-tab-panel subscription-details" id="step2TabPanelLiveTv" role="tabpanel" aria-labelledby="step2TabBtnLiveTv" style="margin-bottom: 20px;">
+                        <div class="subscription-card">
+                            <h3>Channel Guide</h3>
+                            <div class="live-tv-filter-row">
+                                <div class="form-group">
+                                    <label for="liveTvPlaylistSelect">Playlist</label>
+                                    <select id="liveTvPlaylistSelect"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="liveTvChannelGroupSelect">Channel Group</label>
+                                    <select id="liveTvChannelGroupSelect"></select>
+                                </div>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label>TV Guide</label>
+                                <div id="liveTvGuide" class="live-tv-guide">
+                                    <div class="live-tv-guide-empty">Select a channel group to load guide data.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="step2-tab-panel subscription-details" id="step2TabPanelCustomGroups" role="tabpanel" aria-labelledby="step2TabBtnCustomGroups" style="margin-bottom: 20px;">
+                        <div class="subscription-card">
+                            <h3>Custom Channel Groups</h3>
+                            <p class="subtitle" style="margin-bottom: 0;">Coming sooner or later</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -112,6 +145,10 @@
                 </div>
             </div>
         </section>
+
+        <footer class="app-footer">
+            <a id="appVersionBadge" class="app-version-badge" style="display:none;" href="https://github.com/bill-roemhild/xtream2m3u-pro" target="_blank" rel="noopener noreferrer"></a>
+        </footer>
 
         <!-- API Builder Modal -->
         <div class="modal" id="apiBuilderModal">
@@ -308,6 +345,7 @@
                 <div class="modal-header">
                     <h3 id="channelViewerTitle">Channel Viewer</h3>
                 </div>
+                <div id="channelViewerProgramInfo" class="channel-viewer-program-info" style="display:none;"></div>
                 <div class="channel-viewer-shell">
                     <video id="channelViewerVideo" autoplay playsinline style="width:100%; max-height: 70vh; background: #000; border-radius: 10px;"></video>
                     <div class="channel-viewer-controls">
