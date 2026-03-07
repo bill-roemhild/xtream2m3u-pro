@@ -23,6 +23,7 @@ let state = {
         includeVod: false
     },
     subscription: null,
+    savedPlaylists: [],
     credentialProfiles: [],
     activeProfileKey: '',
     profileModalMode: 'new',
@@ -32,6 +33,15 @@ let state = {
     editingPlaylistId: null,
     editingPlaylistOwner: '',
     step2ActiveTab: 'subscription',
+    liveTvSelectedPlaylistId: '',
+    liveTvSelectedGroup: '',
+    liveTvPlaylistConfig: null,
+    liveTvPlaylistConfigById: {},
+    liveTvGuideRequestToken: 0,
+    liveTvGuideData: [],
+    liveTvGuideWindowStartMs: null,
+    liveTvServerTimezone: '',
+    liveTvServerClockOffsetMs: 0,
     authenticated: false,
     currentUsername: '',
     isAdmin: false,
@@ -40,6 +50,8 @@ let state = {
 };
 let channelViewerHls = null;
 const VIEWER_VOLUME_KEY = 'channel_viewer_volume';
+let channelViewerSessionId = 0;
+let channelViewerAbortController = null;
 
 // DOM Elements
 const elements = {
@@ -72,6 +84,7 @@ const elements = {
     channelSelectionText: document.getElementById('channelSelectionText'),
     channelViewerModal: document.getElementById('channelViewerModal'),
     channelViewerTitle: document.getElementById('channelViewerTitle'),
+    channelViewerProgramInfo: document.getElementById('channelViewerProgramInfo'),
     channelViewerVideo: document.getElementById('channelViewerVideo'),
     channelViewerPlayBtn: document.getElementById('channelViewerPlayBtn'),
     channelViewerMuteBtn: document.getElementById('channelViewerMuteBtn'),
@@ -87,8 +100,15 @@ const elements = {
     savedPlaylistsList: document.getElementById('savedPlaylistsList'),
     step2TabBtnSubscription: document.getElementById('step2TabBtnSubscription'),
     step2TabBtnCustomize: document.getElementById('step2TabBtnCustomize'),
+    step2TabBtnLiveTv: document.getElementById('step2TabBtnLiveTv'),
+    step2TabBtnCustomGroups: document.getElementById('step2TabBtnCustomGroups'),
     step2TabPanelSubscription: document.getElementById('step2TabPanelSubscription'),
     step2TabPanelCustomize: document.getElementById('step2TabPanelCustomize'),
+    step2TabPanelLiveTv: document.getElementById('step2TabPanelLiveTv'),
+    step2TabPanelCustomGroups: document.getElementById('step2TabPanelCustomGroups'),
+    liveTvPlaylistSelect: document.getElementById('liveTvPlaylistSelect'),
+    liveTvChannelGroupSelect: document.getElementById('liveTvChannelGroupSelect'),
+    liveTvGuide: document.getElementById('liveTvGuide'),
     modalPlaylistName: document.getElementById('modalPlaylistName'),
     modalSavedLinks: document.getElementById('modalSavedLinks'),
     modalSavedM3uUrl: document.getElementById('modalSavedM3uUrl'),
@@ -105,9 +125,9 @@ const elements = {
     authLoginSubmitBtn: document.getElementById('authLoginSubmitBtn'),
     addUserBtn: document.getElementById('addUserBtn'),
     backupRestoreBtn: document.getElementById('backupRestoreBtn'),
+    serviceSelectBtn: document.getElementById('serviceSelectBtn'),
     logoutBtn: document.getElementById('logoutBtn'),
     appVersionBadge: document.getElementById('appVersionBadge'),
-    authUserBadge: document.getElementById('authUserBadge'),
     addUserModal: document.getElementById('addUserModal'),
     authUsersList: document.getElementById('authUsersList'),
     backupModal: document.getElementById('backupModal')
@@ -190,18 +210,11 @@ function updateConnectionAvailability() {
 }
 
 function renderAuthControls() {
-    const username = String(state.currentUsername || '').trim();
-    if (elements.authUserBadge) {
-        if (state.authenticated && username) {
-            elements.authUserBadge.style.display = 'inline-flex';
-            elements.authUserBadge.textContent = state.isAdmin ? `${username} (admin)` : username;
-        } else {
-            elements.authUserBadge.style.display = 'none';
-            elements.authUserBadge.textContent = '';
-        }
-    }
     if (elements.logoutBtn) {
         elements.logoutBtn.style.display = state.authenticated ? 'inline-flex' : 'none';
+    }
+    if (elements.serviceSelectBtn) {
+        elements.serviceSelectBtn.style.display = state.authenticated ? 'inline-flex' : 'none';
     }
     if (elements.addUserBtn) {
         elements.addUserBtn.style.display = state.authenticated && state.isAdmin ? 'inline-flex' : 'none';
@@ -695,13 +708,23 @@ function resetAppForLoggedOutState() {
     state.appInitialized = false;
     state.categories = [];
     state.subscription = null;
+    state.savedPlaylists = [];
     state.credentialProfiles = [];
     state.activeProfileKey = '';
     state.selectedCategories = new Set();
     state.collapsedSections = new Set();
+    state.liveTvSelectedPlaylistId = '';
+    state.liveTvSelectedGroup = '';
+    state.liveTvGuideRequestToken += 1;
+    state.liveTvGuideData = [];
+    state.liveTvGuideWindowStartMs = null;
+    state.liveTvServerTimezone = '';
+    state.liveTvServerClockOffsetMs = 0;
     renderProfileSelect();
     applyActiveProfileToForm();
     renderSubscriptionDetails();
+    renderLiveTvPlaylistOptions();
+    renderLiveTvGroupOptions();
     if (elements.savedPlaylistsList) {
         elements.savedPlaylistsList.innerHTML = '<div class="saved-playlist-item">Login required.</div>';
     }
@@ -806,28 +829,694 @@ function goBackToStep1() {
 }
 
 function setStep2Tab(tabKey) {
-    const normalized = tabKey === 'customize' ? 'customize' : 'subscription';
+    const normalized = ['subscription', 'customize', 'live-tv', 'custom-groups'].includes(tabKey) ? tabKey : 'subscription';
     state.step2ActiveTab = normalized;
 
     const isSubscription = normalized === 'subscription';
+    const isCustomize = normalized === 'customize';
+    const isLiveTv = normalized === 'live-tv';
+    const isCustomGroups = normalized === 'custom-groups';
     const subBtn = elements.step2TabBtnSubscription;
     const customBtn = elements.step2TabBtnCustomize;
+    const liveTvBtn = elements.step2TabBtnLiveTv;
+    const customGroupsBtn = elements.step2TabBtnCustomGroups;
     const subPanel = elements.step2TabPanelSubscription;
     const customPanel = elements.step2TabPanelCustomize;
+    const liveTvPanel = elements.step2TabPanelLiveTv;
+    const customGroupsPanel = elements.step2TabPanelCustomGroups;
 
     if (subBtn) {
         subBtn.classList.toggle('active', isSubscription);
         subBtn.setAttribute('aria-selected', isSubscription ? 'true' : 'false');
     }
     if (customBtn) {
-        customBtn.classList.toggle('active', !isSubscription);
-        customBtn.setAttribute('aria-selected', !isSubscription ? 'true' : 'false');
+        customBtn.classList.toggle('active', isCustomize);
+        customBtn.setAttribute('aria-selected', isCustomize ? 'true' : 'false');
+    }
+    if (liveTvBtn) {
+        liveTvBtn.classList.toggle('active', isLiveTv);
+        liveTvBtn.setAttribute('aria-selected', isLiveTv ? 'true' : 'false');
+    }
+    if (customGroupsBtn) {
+        customGroupsBtn.classList.toggle('active', isCustomGroups);
+        customGroupsBtn.setAttribute('aria-selected', isCustomGroups ? 'true' : 'false');
     }
     if (subPanel) {
         subPanel.classList.toggle('active', isSubscription);
     }
     if (customPanel) {
-        customPanel.classList.toggle('active', !isSubscription);
+        customPanel.classList.toggle('active', isCustomize);
+    }
+    if (liveTvPanel) {
+        liveTvPanel.classList.toggle('active', isLiveTv);
+    }
+    if (customGroupsPanel) {
+        customGroupsPanel.classList.toggle('active', isCustomGroups);
+    }
+}
+
+function renderLiveTvPlaylistOptions() {
+    if (!elements.liveTvPlaylistSelect) return;
+    const items = Array.isArray(state.savedPlaylists) ? state.savedPlaylists : [];
+    if (items.length === 0) {
+        elements.liveTvPlaylistSelect.innerHTML = '<option value="">No saved playlists</option>';
+        elements.liveTvPlaylistSelect.disabled = true;
+        state.liveTvSelectedPlaylistId = '';
+        state.liveTvPlaylistConfig = null;
+        state.liveTvPlaylistConfigById = {};
+        renderLiveTvGroupOptions();
+        return;
+    }
+    elements.liveTvPlaylistSelect.disabled = false;
+    elements.liveTvPlaylistSelect.innerHTML = items
+        .map((item) => `<option value="${escapeHtml(item.id || '')}">${escapeHtml(item.name || item.id || 'Playlist')}</option>`)
+        .join('');
+    const hasSelected = items.some((item) => String(item.id || '') === state.liveTvSelectedPlaylistId);
+    if (!hasSelected) {
+        state.liveTvSelectedPlaylistId = String(items[0].id || '');
+    }
+    elements.liveTvPlaylistSelect.value = state.liveTvSelectedPlaylistId;
+}
+
+function liveTvGroupMatches(groupTitle, pattern) {
+    const title = String(groupTitle || '').trim().toLowerCase();
+    const rawPattern = String(pattern || '').trim().toLowerCase();
+    if (!title || !rawPattern) return false;
+
+    if (rawPattern.includes('*') || rawPattern.includes('?')) {
+        const regexSafe = rawPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+        const wildcardRegex = `^${regexSafe.replace(/\*/g, '.*').replace(/\?/g, '.')}$`;
+        return new RegExp(wildcardRegex).test(title);
+    }
+    return title.includes(rawPattern);
+}
+
+function getLiveTvFilteredStreams() {
+    const config = state.liveTvPlaylistConfig || {};
+    const streams = (Array.isArray(state.streams) ? state.streams : [])
+        .filter((stream) => String(stream?.content_type || 'live').trim() === 'live');
+    const categoryNameById = new Map(
+        (Array.isArray(state.categories) ? state.categories : [])
+            .map((cat) => [String(cat?.category_id ?? '').trim(), String(cat?.category_name || 'Uncategorized').trim()])
+    );
+
+    const wantedGroups = parseCsv(config.wanted_groups || '');
+    const unwantedGroups = parseCsv(config.unwanted_groups || '');
+    const wantedStreamIds = new Set(parseCsv(config.wanted_stream_ids || ''));
+    const unwantedStreamIds = new Set(parseCsv(config.unwanted_stream_ids || ''));
+    const hasWanted = wantedGroups.length > 0 || wantedStreamIds.size > 0;
+
+    return streams.filter((stream) => {
+        const streamId = String(stream?.stream_id ?? '').trim();
+        const categoryId = String(stream?.category_id ?? '').trim();
+        const categoryName = categoryNameById.get(categoryId) || 'Uncategorized';
+
+        let include = true;
+        if (hasWanted) {
+            if (wantedStreamIds.size > 0) {
+                include = wantedStreamIds.has(streamId);
+            } else {
+                include = wantedGroups.some((pattern) => liveTvGroupMatches(categoryName, pattern));
+            }
+        }
+        if (!include) return false;
+
+        if (unwantedStreamIds.has(streamId)) return false;
+        if (unwantedGroups.some((pattern) => liveTvGroupMatches(categoryName, pattern))) return false;
+        return true;
+    });
+}
+
+function renderLiveTvGroupOptions() {
+    if (!elements.liveTvChannelGroupSelect) return;
+    if (!state.liveTvSelectedPlaylistId) {
+        elements.liveTvChannelGroupSelect.innerHTML = '<option value="">Select Playlist first</option>';
+        elements.liveTvChannelGroupSelect.disabled = true;
+        state.liveTvSelectedGroup = '';
+        renderLiveTvGuideMessage('Select a playlist first.');
+        return;
+    }
+
+    const filteredStreams = getLiveTvFilteredStreams();
+    const categoryByKey = new Map(
+        (Array.isArray(state.categories) ? state.categories : [])
+            .map((cat) => [`${String(cat?.category_id ?? '').trim()}::${String(cat?.content_type || 'live').trim()}`, cat])
+    );
+    const options = [{ value: '', label: 'Select Channel Group' }];
+    const seen = new Set();
+    filteredStreams.forEach((stream) => {
+        const categoryId = String(stream?.category_id ?? '').trim();
+        const type = String(stream?.content_type || 'live').trim();
+        const key = `${categoryId}::${type}`;
+        if (!categoryId || seen.has(key)) return;
+        seen.add(key);
+        const category = categoryByKey.get(key);
+        const name = String(category?.category_name || 'Uncategorized').trim();
+        options.push({ value: key, label: `${name} (${type.toUpperCase()})` });
+    });
+
+    elements.liveTvChannelGroupSelect.disabled = options.length <= 1;
+    elements.liveTvChannelGroupSelect.innerHTML = options
+        .map((opt) => `<option value="${escapeHtml(opt.value)}">${escapeHtml(opt.label)}</option>`)
+        .join('');
+    const currentGroup = String(state.liveTvSelectedGroup || '').trim();
+    const hasSelected = Boolean(currentGroup) && options.some((opt) => opt.value === currentGroup);
+    if (!hasSelected) {
+        const firstGroup = options.find((opt) => String(opt.value || '').trim());
+        state.liveTvSelectedGroup = firstGroup ? String(firstGroup.value) : '';
+    }
+    elements.liveTvChannelGroupSelect.value = state.liveTvSelectedGroup;
+    void loadAndRenderLiveTvGuide();
+}
+
+function getLiveTvChannelsForSelectedGroup() {
+    const selectedGroup = String(state.liveTvSelectedGroup || '').trim();
+    if (!selectedGroup) return [];
+    const [categoryId, contentType] = selectedGroup.split('::');
+    return getLiveTvFilteredStreams()
+        .filter((stream) => String(stream?.category_id ?? '').trim() === String(categoryId || '').trim())
+        .filter((stream) => String(stream?.content_type || 'live').trim() === String(contentType || 'live').trim())
+        .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || '')));
+}
+
+function resolveGuideChannelStreamId(channel) {
+    const directId = normalizeStreamId(channel);
+    if (directId) return directId;
+
+    const channelName = String(channel?.name || '').trim().toLowerCase();
+    if (!channelName) return '';
+
+    const selectedGroupChannels = getLiveTvChannelsForSelectedGroup();
+    const exact = selectedGroupChannels.find((stream) => {
+        const name = String(stream?.name || '').trim().toLowerCase();
+        return name && name === channelName && normalizeStreamId(stream);
+    });
+    if (exact) return normalizeStreamId(exact);
+
+    const fuzzy = selectedGroupChannels.find((stream) => {
+        const name = String(stream?.name || '').trim().toLowerCase();
+        return name && (name.includes(channelName) || channelName.includes(name)) && normalizeStreamId(stream);
+    });
+    return fuzzy ? normalizeStreamId(fuzzy) : '';
+}
+
+function renderLiveTvGuideMessage(message) {
+    if (!elements.liveTvGuide) return;
+    state.liveTvGuideData = [];
+    elements.liveTvGuide.innerHTML = `<div class="live-tv-guide-empty">${escapeHtml(message || 'No guide data available.')}</div>`;
+}
+
+function formatEpgDateTime(value, context = {}) {
+    const raw = String(value || '').trim();
+    if (!raw) return 'N/A';
+    const parsedMs = parseEpgDateToMs(value, context);
+    if (Number.isFinite(parsedMs) && parsedMs > 0) return new Date(parsedMs).toLocaleString();
+    return raw;
+}
+
+async function fetchShortEpgForStream(streamId) {
+    const params = new URLSearchParams({
+        url: state.credentials.url || '',
+        username: state.credentials.username || '',
+        password: state.credentials.password || '',
+        stream_id: String(streamId || ''),
+        limit: '8'
+    });
+    const response = await fetch(`/epg-short?${params.toString()}`);
+    const payload = await response.json();
+    if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'Failed to load EPG');
+    }
+    return payload;
+}
+
+async function fetchShortEpgBatchForStreams(streamIds) {
+    const normalized = Array.from(new Set((Array.isArray(streamIds) ? streamIds : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)));
+    if (normalized.length === 0) return new Map();
+
+    const response = await fetch('/epg-short-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: state.credentials.url || '',
+            username: state.credentials.username || '',
+            password: state.credentials.password || '',
+            stream_ids: normalized,
+            limit: 8
+        })
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+        throw new Error(payload.details || payload.error || 'Failed to load EPG');
+    }
+    const resultMap = new Map();
+    const rows = Array.isArray(payload?.results) ? payload.results : [];
+    rows.forEach((row) => {
+        const streamId = String(row?.stream_id || '').trim();
+        if (streamId) resultMap.set(streamId, row);
+    });
+    return resultMap;
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+    const queue = Array.isArray(items) ? items : [];
+    const workers = Math.max(1, Number(concurrency) || 1);
+    const results = new Array(queue.length);
+    let index = 0;
+
+    async function worker() {
+        while (index < queue.length) {
+            const current = index;
+            index += 1;
+            results[current] = await mapper(queue[current], current);
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(workers, queue.length) }, () => worker()));
+    return results;
+}
+
+function getTimeZoneOffsetMs(timeZone, date) {
+    if (!timeZone || !date) return 0;
+    try {
+        const dtf = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false
+        });
+        const parts = dtf.formatToParts(date);
+        const map = {};
+        parts.forEach((part) => {
+            if (part.type !== 'literal') map[part.type] = part.value;
+        });
+        const asUtc = Date.UTC(
+            Number(map.year || 0),
+            Number(map.month || 1) - 1,
+            Number(map.day || 1),
+            Number(map.hour || 0),
+            Number(map.minute || 0),
+            Number(map.second || 0)
+        );
+        return asUtc - date.getTime();
+    } catch (_error) {
+        return 0;
+    }
+}
+
+function parseDateTimeInTimeZone(raw, timeZone) {
+    const match = String(raw || '')
+        .trim()
+        .match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = Number(match[6] || 0);
+    const guessUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+    const guessDate = new Date(guessUtc);
+    const offset1 = getTimeZoneOffsetMs(timeZone, guessDate);
+    const result1 = guessUtc - offset1;
+    const offset2 = getTimeZoneOffsetMs(timeZone, new Date(result1));
+    return result1 - (offset2 - offset1);
+}
+
+function parseEpgDateToMs(value, context = {}) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) {
+        const asNum = Number(raw);
+        const ms = raw.length >= 13 ? asNum : asNum * 1000;
+        return Number.isFinite(ms) && ms > 0 ? ms : null;
+    }
+    const serverTz = String(context?.serverTimezone || '').trim();
+    if (serverTz) {
+        const tzParsed = parseDateTimeInTimeZone(raw, serverTz);
+        if (Number.isFinite(tzParsed) && tzParsed > 0) return tzParsed;
+    }
+    const normalized = raw.includes(' ') ? raw.replace(' ', 'T') : raw;
+    const parsed = Date.parse(normalized);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function formatGuideTick(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function roundMsToStep(ms, stepMs) {
+    if (!Number.isFinite(ms)) return ms;
+    if (!Number.isFinite(stepMs) || stepMs <= 0) return ms;
+    return Math.round(ms / stepMs) * stepMs;
+}
+
+function dedupeGuideListings(entries) {
+    const items = Array.isArray(entries) ? entries.slice() : [];
+    items.sort((a, b) => {
+        if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+        if (a.endMs !== b.endMs) return b.endMs - a.endMs;
+        return String(a?.title || '').localeCompare(String(b?.title || ''));
+    });
+
+    // Collapse exact same time-slot duplicates by keeping the most descriptive entry.
+    const byWindow = new Map();
+    items.forEach((entry) => {
+        const key = `${entry.startMs}-${entry.endMs}`;
+        const score = String(entry?.description || '').length + String(entry?.title || '').length;
+        const current = byWindow.get(key);
+        if (!current || score > current.score) {
+            byWindow.set(key, { entry, score });
+        }
+    });
+    return Array.from(byWindow.values()).map((row) => row.entry)
+        .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+}
+
+function renderLiveTvGuideTimeline(results) {
+    const timeContext = {
+        serverTimezone: state.liveTvServerTimezone
+    };
+    const normalized = (Array.isArray(results) ? results : []).map((item) => {
+        const listings = (Array.isArray(item?.listings) ? item.listings : []).map((entry) => {
+            const startMs = parseEpgDateToMs(entry?.start, timeContext);
+            const endMs = parseEpgDateToMs(entry?.end, timeContext);
+            return { ...entry, startMs, endMs };
+        }).filter((entry) => entry.startMs && entry.endMs && entry.endMs > entry.startMs);
+        return { channel: item.channel, listings };
+    });
+
+    const allStarts = normalized.flatMap((item) => item.listings.map((entry) => entry.startMs));
+    const allEnds = normalized.flatMap((item) => item.listings.map((entry) => entry.endMs));
+    if (allStarts.length === 0 || allEnds.length === 0) {
+        return normalized.map((item) => {
+            const channelName = String(item?.channel?.name || '').trim() || `Channel ${normalizeStreamId(item?.channel)}`;
+            return `
+                <div class="live-tv-guide-row2">
+                    <div class="live-tv-guide-channel2">${escapeHtml(channelName)}</div>
+                    <div class="live-tv-guide-empty-row">No EPG entries available.</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    const earliest = Math.min(...allStarts);
+    const latest = Math.max(...allEnds);
+    const hour = 60 * 60 * 1000;
+    const halfHour = 30 * 60 * 1000;
+    const now = Date.now() + Number(state.liveTvServerClockOffsetMs || 0);
+    const defaultStart = Math.floor(now / halfHour) * halfHour;
+    const minWindowStart = Math.floor(Math.min(earliest, now) / halfHour) * halfHour - (2 * hour);
+    const maxWindowStart = Math.ceil(Math.max(latest, now) / halfHour) * halfHour;
+    const currentStart = Number.isFinite(state.liveTvGuideWindowStartMs)
+        ? state.liveTvGuideWindowStartMs
+        : defaultStart;
+    const clampedStart = Math.min(Math.max(currentStart, minWindowStart), maxWindowStart);
+    const start = roundMsToStep(clampedStart, halfHour);
+    state.liveTvGuideWindowStartMs = start;
+    const end = start + (2 * hour);
+    const range = 2 * hour;
+
+    const tickCount = 4;
+    const ticks = Array.from({ length: tickCount + 1 }, (_, idx) => start + (idx * halfHour))
+        .map((tickMs) => {
+            const left = ((tickMs - start) / range) * 100;
+            return `<div class="live-tv-guide-tick" style="left:${left}%">${escapeHtml(formatGuideTick(tickMs))}</div>`;
+        })
+        .join('');
+
+    const rows = normalized.map((item) => {
+        const channelName = String(item?.channel?.name || '').trim() || `Channel ${normalizeStreamId(item?.channel)}`;
+        const channelIcon = String(item?.channel?.stream_icon || '').trim();
+        const iconUrl = channelIcon ? `/image-proxy/${encodeURIComponent(channelIcon)}` : '';
+        const channelLabel = `
+            <span class="live-tv-guide-channel-label">
+                ${iconUrl ? `<img class="live-tv-guide-channel-logo" src="${escapeHtml(iconUrl)}" alt="" loading="lazy" decoding="async">` : ''}
+                <span class="live-tv-guide-channel-name">${escapeHtml(channelName)}</span>
+            </span>
+        `;
+        const channelStreamId = resolveGuideChannelStreamId(item?.channel);
+        const channelContentType = String(item?.channel?.content_type || 'live').trim() || 'live';
+        const channelExtension = String(item?.channel?.container_extension || (channelContentType === 'live' ? 'ts' : 'mp4')).trim();
+        const channelButtonAttrs = channelStreamId
+            ? `role="button" tabindex="0" data-stream-id="${escapeHtml(encodeURIComponent(channelStreamId))}" data-content-type="${escapeHtml(encodeURIComponent(channelContentType))}" data-extension="${escapeHtml(encodeURIComponent(channelExtension))}" data-stream-name="${escapeHtml(encodeURIComponent(channelName))}"`
+            : '';
+        if (!item.listings.length) {
+            return `
+                <div class="live-tv-guide-row2">
+                    <div class="live-tv-guide-channel2 ${channelStreamId ? 'is-clickable' : ''}" ${channelButtonAttrs}>${channelLabel}</div>
+                    <div class="live-tv-guide-empty-row">No EPG entries available.</div>
+                </div>
+            `;
+        }
+        const visibleEntries = dedupeGuideListings(item.listings)
+            .filter((entry) => entry.endMs > start && entry.startMs < end)
+            .slice()
+            .sort((a, b) => a.startMs - b.startMs);
+        const laidOut = [];
+        let lastRightPct = 0;
+        visibleEntries.forEach((entry) => {
+            const clippedStart = Math.max(entry.startMs, start);
+            const clippedEnd = Math.min(entry.endMs, end);
+            if (clippedEnd <= clippedStart) return;
+            const originalLeft = ((clippedStart - start) / range) * 100;
+            const originalRight = ((clippedEnd - start) / range) * 100;
+            const left = Math.max(originalLeft, lastRightPct);
+            if (left >= 100) return;
+            const right = Math.min(100, Math.max(left, originalRight));
+            if (right <= left) return;
+            if ((right - left) < 1.2) return;
+            laidOut.push({ entry, left, right });
+            lastRightPct = right;
+        });
+
+        const blocks = laidOut.map(({ entry, left, right }) => {
+            const width = Math.max(right - left, 0.4);
+            const isCompact = width < 12;
+            const isTiny = width < 6;
+            const title = String(entry?.title || '').trim() || 'Untitled';
+            const description = String(entry?.description || '').trim();
+            const isNow = now >= entry.startMs && now <= entry.endMs;
+            const formattedStart = formatEpgDateTime(entry.start, timeContext);
+            const formattedEnd = formatEpgDateTime(entry.end, timeContext);
+            const durationMinutes = Math.max(1, Math.round((entry.endMs - entry.startMs) / 60000));
+            const streamIdText = String(item?.channel?.stream_id ?? item?.channel?.series_id ?? '').trim();
+            return `
+                <div class="live-tv-guide-block ${isNow ? 'is-now' : ''} ${isCompact ? 'is-compact' : ''} ${isTiny ? 'is-tiny' : ''}" style="left:${left}%;width:${width}%;">
+                    <div class="live-tv-guide-block-title">${isTiny ? '' : escapeHtml(title)}</div>
+                    <div class="live-tv-guide-block-time">${isCompact ? '' : `${escapeHtml(formatGuideTick(entry.startMs))} - ${escapeHtml(formatGuideTick(entry.endMs))}`}</div>
+                    <div class="live-tv-guide-tooltip">
+                        <div class="live-tv-guide-tooltip-header">
+                            <div class="live-tv-guide-tooltip-title">${escapeHtml(title)}</div>
+                            ${isNow ? '<span class="live-tv-guide-tooltip-badge">Now</span>' : ''}
+                        </div>
+                        <div class="live-tv-guide-tooltip-channel">${escapeHtml(channelName)}</div>
+                        <div class="live-tv-guide-tooltip-meta">${escapeHtml(formattedStart)} - ${escapeHtml(formattedEnd)}</div>
+                        <div class="live-tv-guide-tooltip-facts">
+                            <span>Duration: ${escapeHtml(String(durationMinutes))} min</span>
+                            ${streamIdText ? `<span>Stream ID: ${escapeHtml(streamIdText)}</span>` : ''}
+                        </div>
+                        ${description ? `<div class="live-tv-guide-tooltip-description">${escapeHtml(description)}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+        return `
+            <div class="live-tv-guide-row2">
+                <div class="live-tv-guide-channel2 ${channelStreamId ? 'is-clickable' : ''}" ${channelButtonAttrs}>${channelLabel}</div>
+                <div class="live-tv-guide-track">
+                    ${blocks}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    return `
+        <div class="live-tv-guide-timeline">
+            <div class="live-tv-guide-hint">Drag timeline left/right to browse time (2-hour window).</div>
+            <div class="live-tv-guide-ticks">${ticks}</div>
+            <div class="live-tv-guide-rows">${rows}</div>
+        </div>
+    `;
+}
+
+function attachLiveTvGuideDragHandlers() {
+    if (!elements.liveTvGuide || !Array.isArray(state.liveTvGuideData) || state.liveTvGuideData.length === 0) return;
+    if (elements.liveTvGuide.dataset.dragBound === '1') return;
+    elements.liveTvGuide.dataset.dragBound = '1';
+
+    let dragging = false;
+    let startX = 0;
+    let startWindow = Number(state.liveTvGuideWindowStartMs || Date.now());
+    let pointerId = null;
+    const stepMs = 30 * 60 * 1000;
+    const pxPerStep = 80;
+
+    const setDraggingClass = (enabled) => {
+        const timeline = elements.liveTvGuide.querySelector('.live-tv-guide-timeline');
+        if (!timeline) return;
+        timeline.classList.toggle('is-dragging', enabled);
+    };
+
+    elements.liveTvGuide.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        const target = e.target instanceof Element ? e.target : null;
+        if (!target || !target.closest('.live-tv-guide-timeline')) return;
+        if (target.closest('.live-tv-guide-channel2')) return;
+        dragging = true;
+        pointerId = e.pointerId;
+        startX = e.clientX;
+        startWindow = Number(state.liveTvGuideWindowStartMs || Date.now());
+        setDraggingClass(true);
+        try { elements.liveTvGuide.setPointerCapture(e.pointerId); } catch (_e) {}
+    });
+
+    elements.liveTvGuide.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        if (pointerId !== null && e.pointerId !== pointerId) return;
+        e.preventDefault();
+        const dx = e.clientX - startX;
+        const stepDelta = Math.round((-dx) / pxPerStep);
+        state.liveTvGuideWindowStartMs = startWindow + (stepDelta * stepMs);
+        elements.liveTvGuide.innerHTML = renderLiveTvGuideTimeline(state.liveTvGuideData);
+        setDraggingClass(true);
+    });
+
+    const stopDrag = (e) => {
+        if (!dragging) return;
+        if (pointerId !== null && e.pointerId !== pointerId) return;
+        dragging = false;
+        pointerId = null;
+        setDraggingClass(false);
+        try { elements.liveTvGuide.releasePointerCapture(e.pointerId); } catch (_e) {}
+    };
+    elements.liveTvGuide.addEventListener('pointerup', stopDrag);
+    elements.liveTvGuide.addEventListener('pointercancel', stopDrag);
+    elements.liveTvGuide.addEventListener('pointerleave', stopDrag);
+}
+
+async function loadAndRenderLiveTvGuide() {
+    const requestToken = state.liveTvGuideRequestToken + 1;
+    state.liveTvGuideRequestToken = requestToken;
+
+    if (!state.liveTvSelectedPlaylistId) {
+        state.liveTvGuideWindowStartMs = null;
+        renderLiveTvGuideMessage('Select a playlist first.');
+        return;
+    }
+    if (!state.liveTvSelectedGroup) {
+        state.liveTvGuideWindowStartMs = null;
+        renderLiveTvGuideMessage('Select a channel group to load guide data.');
+        return;
+    }
+
+    const channels = getLiveTvChannelsForSelectedGroup();
+    if (channels.length === 0) {
+        state.liveTvGuideWindowStartMs = null;
+        renderLiveTvGuideMessage('No channels found in this channel group.');
+        return;
+    }
+
+    if (elements.liveTvGuide) {
+        elements.liveTvGuide.innerHTML = '<div class="live-tv-guide-empty">Loading guide data...</div>';
+    }
+
+    let results = [];
+    try {
+        const streamIds = channels
+            .map((channel) => normalizeStreamId(channel))
+            .filter(Boolean);
+        const epgByStreamId = await fetchShortEpgBatchForStreams(streamIds);
+        results = channels.map((channel) => {
+            const streamId = normalizeStreamId(channel);
+            if (!streamId) return { channel, listings: [], error: 'missing_stream_id' };
+            const payload = epgByStreamId.get(String(streamId));
+            if (!payload || payload.error) {
+                return { channel, listings: [], error: payload?.error || 'Failed to fetch EPG' };
+            }
+            return {
+                channel,
+                listings: Array.isArray(payload?.listings) ? payload.listings : [],
+                serverTimezone: String(payload?.server_timezone || '').trim(),
+                serverTimestamp: Number(payload?.server_timestamp || 0),
+                error: null
+            };
+        });
+    } catch (batchError) {
+        console.warn('[loadAndRenderLiveTvGuide] batch EPG failed, falling back per-stream', batchError);
+        results = await mapWithConcurrency(channels, 6, async (channel) => {
+            const streamId = normalizeStreamId(channel);
+            if (!streamId) return { channel, listings: [], error: 'missing_stream_id' };
+            try {
+                const payload = await fetchShortEpgForStream(streamId);
+                const listings = Array.isArray(payload?.listings) ? payload.listings : [];
+                const serverTimezone = String(payload?.server_timezone || '').trim();
+                const serverTimestamp = Number(payload?.server_timestamp || 0);
+                return { channel, listings, serverTimezone, serverTimestamp, error: null };
+            } catch (error) {
+                console.warn('[loadAndRenderLiveTvGuide] channel EPG failed', streamId, error);
+                return { channel, listings: [], error: error?.message || 'Failed to fetch EPG' };
+            }
+        });
+    }
+
+    if (requestToken !== state.liveTvGuideRequestToken) return;
+
+    if (!elements.liveTvGuide) return;
+    if (results.length === 0) {
+        renderLiveTvGuideMessage('No guide data available.');
+        return;
+    }
+    const timingSource = results.find((r) => Number.isFinite(r?.serverTimestamp) && r.serverTimestamp > 0)
+        || results.find((r) => String(r?.serverTimezone || '').trim());
+    state.liveTvServerTimezone = String(timingSource?.serverTimezone || '').trim();
+    if (Number.isFinite(timingSource?.serverTimestamp) && timingSource.serverTimestamp > 0) {
+        state.liveTvServerClockOffsetMs = (timingSource.serverTimestamp * 1000) - Date.now();
+    } else {
+        state.liveTvServerClockOffsetMs = 0;
+    }
+    state.liveTvGuideData = results;
+    if (!Number.isFinite(state.liveTvGuideWindowStartMs)) {
+        state.liveTvGuideWindowStartMs = null;
+    }
+    elements.liveTvGuide.innerHTML = renderLiveTvGuideTimeline(results);
+    attachLiveTvGuideDragHandlers();
+}
+
+async function loadLiveTvPlaylistConfig(playlistId) {
+    const id = String(playlistId || '').trim();
+    if (!id) {
+        state.liveTvPlaylistConfig = null;
+        renderLiveTvGroupOptions();
+        return;
+    }
+
+    if (state.liveTvPlaylistConfigById[id]) {
+        state.liveTvPlaylistConfig = state.liveTvPlaylistConfigById[id];
+        renderLiveTvGroupOptions();
+        return;
+    }
+
+    try {
+        const response = await fetch(`/saved-playlists/${encodeURIComponent(id)}`);
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.details || data.error || 'Failed to load saved playlist');
+        }
+        const config = data?.config || {};
+        state.liveTvPlaylistConfigById[id] = config;
+        state.liveTvPlaylistConfig = config;
+        renderLiveTvGroupOptions();
+    } catch (error) {
+        console.error('[loadLiveTvPlaylistConfig] failed', error);
+        state.liveTvPlaylistConfig = null;
+        renderLiveTvGroupOptions();
     }
 }
 
@@ -900,8 +1589,23 @@ function trialText(isTrial) {
 }
 
 function normalizeStreamId(stream) {
-    const value = stream?.stream_id ?? stream?.series_id ?? '';
-    return String(value).trim();
+    const raw = stream?.raw || {};
+    const candidates = [
+        stream?.stream_id,
+        stream?.series_id,
+        stream?.num,
+        stream?.id,
+        raw?.stream_id,
+        raw?.series_id,
+        raw?.num,
+        raw?.id
+    ];
+    for (const value of candidates) {
+        if (value === null || value === undefined) continue;
+        const normalized = String(value).trim();
+        if (normalized) return normalized;
+    }
+    return '';
 }
 
 function getCategoryStreams(category) {
@@ -1036,6 +1740,7 @@ async function loadCategories() {
         elements.searchInput.value = '';
         renderCategories();
         renderSubscriptionDetails();
+        renderLiveTvGroupOptions();
         setStep2Tab('subscription');
         showStep(2);
 
@@ -1362,7 +2067,9 @@ function toggleChannelSelection(id) {
 }
 
 function closeChannelViewerModal() {
+    cancelChannelViewerSession();
     destroyChannelViewer();
+    setChannelViewerProgramInfo(null);
     if (elements.channelViewerVideo) {
         saveViewerPrefs(elements.channelViewerVideo);
         elements.channelViewerVideo.pause();
@@ -1394,6 +2101,27 @@ function syncChannelViewerControlState() {
     }
 }
 
+function setChannelViewerProgramInfo(programInfo) {
+    if (!elements.channelViewerProgramInfo) return;
+    if (!programInfo || typeof programInfo !== 'object') {
+        elements.channelViewerProgramInfo.style.display = 'none';
+        elements.channelViewerProgramInfo.innerHTML = '';
+        return;
+    }
+    const title = String(programInfo.title || '').trim() || 'Program Details';
+    const description = String(programInfo.description || '').trim();
+    const channelName = String(programInfo.channelName || '').trim();
+    const startText = String(programInfo.start || '').trim();
+    const endText = String(programInfo.end || '').trim();
+    const meta = [channelName, [startText, endText].filter(Boolean).join(' - ')].filter(Boolean).join(' | ');
+    elements.channelViewerProgramInfo.innerHTML = `
+        <div class="channel-viewer-program-title">${escapeHtml(title)}</div>
+        ${meta ? `<div class="channel-viewer-program-meta">${escapeHtml(meta)}</div>` : ''}
+        ${description ? `<div class="channel-viewer-program-description">${escapeHtml(description)}</div>` : ''}
+    `;
+    elements.channelViewerProgramInfo.style.display = 'grid';
+}
+
 function loadViewerPrefs() {
     let volume = 1;
     try {
@@ -1422,7 +2150,23 @@ function destroyChannelViewer() {
     }
 }
 
-function waitForVideoEvent(video, timeoutMs = 25000) {
+function cancelChannelViewerSession() {
+    channelViewerSessionId += 1;
+    if (channelViewerAbortController) {
+        try {
+            channelViewerAbortController.abort();
+        } catch (_e) {}
+        channelViewerAbortController = null;
+    }
+}
+
+function isChannelViewerSessionActive(sessionId) {
+    if (!elements.channelViewerModal) return false;
+    return Number(sessionId) === Number(channelViewerSessionId)
+        && elements.channelViewerModal.classList.contains('active');
+}
+
+function waitForVideoEvent(video, timeoutMs = 25000, signal = null) {
     return new Promise((resolve) => {
         let done = false;
         const finish = (ok) => {
@@ -1432,6 +2176,9 @@ function waitForVideoEvent(video, timeoutMs = 25000) {
             video.removeEventListener('canplay', onCanPlay);
             video.removeEventListener('loadedmetadata', onLoadedMetadata);
             video.removeEventListener('error', onError);
+            if (signal) {
+                signal.removeEventListener('abort', onAbort);
+            }
             clearTimeout(timer);
             resolve(ok);
         };
@@ -1439,17 +2186,26 @@ function waitForVideoEvent(video, timeoutMs = 25000) {
         const onCanPlay = () => finish(true);
         const onLoadedMetadata = () => finish(true);
         const onError = () => finish(false);
+        const onAbort = () => finish(false);
         const timer = setTimeout(() => finish(false), timeoutMs);
+        if (signal?.aborted) {
+            finish(false);
+            return;
+        }
         video.addEventListener('playing', onPlaying, { once: true });
         video.addEventListener('canplay', onCanPlay, { once: true });
         video.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
         video.addEventListener('error', onError, { once: true });
+        if (signal) {
+            signal.addEventListener('abort', onAbort, { once: true });
+        }
     });
 }
 
-async function tryPlayChannelViewerStream(streamUrl, extension) {
+async function tryPlayChannelViewerStream(streamUrl, extension, sessionId, signal = null) {
     const video = elements.channelViewerVideo;
     if (!video || !streamUrl) return false;
+    if (!isChannelViewerSessionActive(sessionId) || signal?.aborted) return false;
 
     destroyChannelViewer();
     video.pause();
@@ -1469,6 +2225,10 @@ async function tryPlayChannelViewerStream(streamUrl, extension) {
                 resolved = true;
                 resolve(ok);
             };
+            if (!isChannelViewerSessionActive(sessionId) || signal?.aborted) {
+                finish(false);
+                return;
+            }
             channelViewerHls = new window.Hls({
                 enableWorker: true,
                 lowLatencyMode: false,
@@ -1484,17 +2244,18 @@ async function tryPlayChannelViewerStream(streamUrl, extension) {
                     finish(false);
                 }
             });
-            waitForVideoEvent(video, 25000).then((ok) => finish(ok));
+            waitForVideoEvent(video, 25000, signal).then((ok) => finish(ok));
         });
-        if (hlsOk) {
+        if (hlsOk && isChannelViewerSessionActive(sessionId) && !signal?.aborted) {
             return true;
         }
     }
 
+    if (!isChannelViewerSessionActive(sessionId) || signal?.aborted) return false;
     video.src = streamUrl;
     video.load();
     video.play().catch(() => {});
-    return await waitForVideoEvent(video, 25000);
+    return await waitForVideoEvent(video, 25000, signal);
 }
 
 function buildStreamUrlCandidates(streamUrl) {
@@ -1549,7 +2310,7 @@ function toggleChannelViewerFullscreen() {
     video.requestFullscreen?.().catch(() => {});
 }
 
-async function openChannelViewer(streamId, contentType = 'live', extension = 'ts', streamName = '') {
+async function openChannelViewer(streamId, contentType = 'live', extension = 'ts', streamName = '', programInfo = null) {
     const id = String(streamId || '').trim();
     if (!id) return;
     const url = document.getElementById('url').value.trim();
@@ -1561,6 +2322,12 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
     }
 
     try {
+        cancelChannelViewerSession();
+        channelViewerAbortController = new AbortController();
+        const sessionId = channelViewerSessionId;
+        const { signal } = channelViewerAbortController;
+
+        setChannelViewerProgramInfo(programInfo);
         if (elements.channelViewerTitle) {
             elements.channelViewerTitle.textContent = streamName ? `Channel Viewer: ${streamName}` : 'Channel Viewer';
         }
@@ -1576,6 +2343,9 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
         let started = false;
 
         for (const ext of Array.from(new Set(extensions.filter(Boolean)))) {
+            if (!isChannelViewerSessionActive(sessionId) || signal.aborted) {
+                return;
+            }
             attempted.push(ext);
             setChannelViewerStatus(`Loading ${ext.toUpperCase()}...`);
             const params = new URLSearchParams({
@@ -1586,7 +2356,10 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
                 content_type: contentType || 'live',
                 extension: ext
             });
-            const response = await fetch(`/stream-link?${params.toString()}`);
+            const response = await fetch(`/stream-link?${params.toString()}`, { signal });
+            if (!isChannelViewerSessionActive(sessionId) || signal.aborted) {
+                return;
+            }
             const data = await response.json();
             if (!response.ok) {
                 continue;
@@ -1602,7 +2375,10 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
                 ? backendCandidates
                 : buildStreamUrlCandidates(streamUrl);
             for (const candidate of streamCandidates) {
-                const ok = await tryPlayChannelViewerStream(candidate, ext);
+                if (!isChannelViewerSessionActive(sessionId) || signal.aborted) {
+                    return;
+                }
+                const ok = await tryPlayChannelViewerStream(candidate, ext, sessionId, signal);
                 if (ok) {
                     started = true;
                     break;
@@ -1617,6 +2393,9 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
             throw new Error(`Unable to play stream with: ${attempted.join(', ')}`);
         }
 
+        if (!isChannelViewerSessionActive(sessionId) || signal.aborted) {
+            return;
+        }
         if (elements.channelViewerVideo) {
             const prefs = loadViewerPrefs();
             elements.channelViewerVideo.volume = prefs.volume;
@@ -1626,10 +2405,100 @@ async function openChannelViewer(streamId, contentType = 'live', extension = 'ts
         setChannelViewerStatus('Ready');
         syncChannelViewerControlState();
     } catch (error) {
+        if (error?.name === 'AbortError') {
+            return;
+        }
         console.error('[openChannelViewer] failed', error);
-        setChannelViewerStatus('Failed to load stream', true);
-        showError(error.message);
+        if (elements.channelViewerModal?.classList.contains('active')) {
+            setChannelViewerStatus('Failed to load stream', true);
+            showError(error.message);
+        }
     }
+}
+
+function decodeViewerParam(value) {
+    const raw = String(value || '');
+    if (!raw) return '';
+    try {
+        return decodeURIComponent(raw);
+    } catch (_e) {
+        return raw;
+    }
+}
+
+function resolveCurrentGuideProgramForStream(streamId) {
+    const targetId = String(streamId || '').trim();
+    if (!targetId) return null;
+    const rows = Array.isArray(state.liveTvGuideData) ? state.liveTvGuideData : [];
+    if (!rows.length) return null;
+
+    const row = rows.find((item) => normalizeStreamId(item?.channel) === targetId);
+    if (!row) return null;
+
+    const timeContext = { serverTimezone: state.liveTvServerTimezone };
+    const nowMs = Date.now() + Number(state.liveTvServerClockOffsetMs || 0);
+    const listings = (Array.isArray(row.listings) ? row.listings : [])
+        .map((entry) => {
+            const startMs = parseEpgDateToMs(entry?.start, timeContext);
+            const endMs = parseEpgDateToMs(entry?.end, timeContext);
+            return { entry, startMs, endMs };
+        })
+        .filter((item) => item.startMs && item.endMs && item.endMs > item.startMs);
+
+    const current = listings.find((item) => nowMs >= item.startMs && nowMs <= item.endMs);
+    if (!current) return null;
+
+    return {
+        title: String(current.entry?.title || '').trim(),
+        description: String(current.entry?.description || '').trim(),
+        start: formatEpgDateTime(current.entry?.start, timeContext),
+        end: formatEpgDateTime(current.entry?.end, timeContext)
+    };
+}
+
+function openGuideProgramViewer(streamId, contentType = 'live', extension = 'ts', streamName = '', title = '', description = '', start = '', end = '') {
+    const decodedStreamId = decodeViewerParam(streamId);
+    const decodedStreamName = decodeViewerParam(streamName);
+    let programInfo = {
+        title: decodeViewerParam(title),
+        description: decodeViewerParam(description),
+        start: decodeViewerParam(start),
+        end: decodeViewerParam(end),
+        channelName: decodedStreamName
+    };
+    if (!String(programInfo.title || '').trim()) {
+        const currentProgram = resolveCurrentGuideProgramForStream(decodedStreamId);
+        if (currentProgram) {
+            programInfo = {
+                ...programInfo,
+                title: currentProgram.title || programInfo.title,
+                description: currentProgram.description || programInfo.description,
+                start: currentProgram.start || programInfo.start,
+                end: currentProgram.end || programInfo.end
+            };
+        }
+    }
+    return openChannelViewer(
+        decodedStreamId,
+        decodeViewerParam(contentType) || 'live',
+        decodeViewerParam(extension) || 'ts',
+        decodedStreamName,
+        programInfo
+    );
+}
+
+function openGuideViewerFromDataset(buttonEl) {
+    if (!buttonEl || !buttonEl.dataset) return;
+    return openGuideProgramViewer(
+        buttonEl.dataset.streamId || '',
+        buttonEl.dataset.contentType || 'live',
+        buttonEl.dataset.extension || 'ts',
+        buttonEl.dataset.streamName || '',
+        '',
+        '',
+        '',
+        ''
+    );
 }
 
 function updateChannelEditorCounter() {
@@ -1913,6 +2782,10 @@ async function savePlaylistFromModal() {
         }
         state.playlistModalMode = 'edit';
         state.editingPlaylistId = data.id || state.editingPlaylistId;
+        state.liveTvPlaylistConfigById = {};
+        if (data.id) {
+            state.liveTvSelectedPlaylistId = String(data.id);
+        }
         await loadSavedPlaylistsList();
         closeModal();
     } catch (error) {
@@ -1949,6 +2822,10 @@ async function savePlaylistFromBuilderModal() {
         state.playlistModalMode = 'edit';
         state.editingPlaylistId = data.id || state.editingPlaylistId;
         state.editingPlaylistOwner = data.owner || state.editingPlaylistOwner;
+        state.liveTvPlaylistConfigById = {};
+        if (data.id) {
+            state.liveTvSelectedPlaylistId = String(data.id);
+        }
         await loadSavedPlaylistsList();
         closePlaylistBuilderModal();
     } catch (error) {
@@ -1977,6 +2854,9 @@ async function loadSavedPlaylistsList() {
             throw new Error(data.details || data.error || 'Failed to load saved playlists');
         }
         const items = Array.isArray(data.items) ? data.items : [];
+        state.savedPlaylists = items;
+        renderLiveTvPlaylistOptions();
+        await loadLiveTvPlaylistConfig(state.liveTvSelectedPlaylistId);
         if (items.length === 0) {
             elements.savedPlaylistsList.innerHTML = '<div class="saved-playlist-item">No saved playlists yet.</div>';
             return;
@@ -2003,6 +2883,10 @@ async function loadSavedPlaylistsList() {
             .join('');
     } catch (error) {
         console.error('[loadSavedPlaylistsList] failed', error);
+        state.savedPlaylists = [];
+        state.liveTvPlaylistConfig = null;
+        state.liveTvPlaylistConfigById = {};
+        renderLiveTvPlaylistOptions();
         elements.savedPlaylistsList.innerHTML = '<div class="saved-playlist-item">Failed to load saved playlists.</div>';
     }
 }
@@ -2079,6 +2963,13 @@ async function executeDeleteSavedPlaylist(id) {
         if (!response.ok) {
             throw new Error(data.details || data.error || 'Failed to delete saved playlist');
         }
+        if (String(state.liveTvSelectedPlaylistId || '') === String(id || '')) {
+            state.liveTvSelectedPlaylistId = '';
+            state.liveTvSelectedGroup = '';
+            state.liveTvPlaylistConfig = null;
+            state.liveTvGuideRequestToken += 1;
+        }
+        state.liveTvPlaylistConfigById = {};
         await loadSavedPlaylistsList();
     } catch (error) {
         console.error('[deleteSavedPlaylist] failed', error);
@@ -2354,6 +3245,41 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (elements.profileSelect) {
         elements.profileSelect.addEventListener('change', (e) => onProfileChanged(e.target.value));
+    }
+    if (elements.liveTvPlaylistSelect) {
+        elements.liveTvPlaylistSelect.addEventListener('change', async (e) => {
+            state.liveTvSelectedPlaylistId = String(e.target.value || '').trim();
+            state.liveTvSelectedGroup = '';
+            state.liveTvGuideWindowStartMs = null;
+            state.liveTvGuideData = [];
+            await loadLiveTvPlaylistConfig(state.liveTvSelectedPlaylistId);
+        });
+    }
+    if (elements.liveTvChannelGroupSelect) {
+        elements.liveTvChannelGroupSelect.addEventListener('change', async (e) => {
+            state.liveTvSelectedGroup = String(e.target.value || '').trim();
+            state.liveTvGuideWindowStartMs = null;
+            await loadAndRenderLiveTvGuide();
+        });
+    }
+    if (elements.liveTvGuide) {
+        elements.liveTvGuide.addEventListener('click', (e) => {
+            const target = e.target instanceof Element ? e.target : null;
+            if (!target) return;
+            const button = target.closest('.live-tv-guide-channel2.is-clickable');
+            if (!button) return;
+            e.preventDefault();
+            openGuideViewerFromDataset(button);
+        });
+        elements.liveTvGuide.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const target = e.target instanceof Element ? e.target : null;
+            if (!target) return;
+            const button = target.closest('.live-tv-guide-channel2.is-clickable');
+            if (!button) return;
+            e.preventDefault();
+            openGuideViewerFromDataset(button);
+        });
     }
 
     // Filter mode change
